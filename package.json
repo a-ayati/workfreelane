@@ -1,0 +1,14 @@
+{
+  "name": "scopewise",
+  "private": true,
+  "type": "module",
+  "description": "Freelancer business management MVP — from brief to payment.",
+  "scripts": {
+    "start": "http-server -p 5173 -c-1 .",
+    "test:e2e": "node tests/e2e.mjs"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "playwright": "^1.56.1"
+  }
+}
