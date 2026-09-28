@@ -25,7 +25,7 @@ export function landing() {
   ];
   return html`<div class="lp">
     <header class="lp-nav">
-      <a class="brand" href="${href('/')}" style="padding:0"><img src="assets/icon.svg" alt="">Scopewise</a>
+      <a class="brand" href="${href('/')}" style="padding:0" aria-label="Scopewise"><img src="assets/icon.svg" alt=""><span class="brand-name">Scopewise</span></a>
       <nav>
         ${langSwitch()}
         <a class="btn btn-ghost hide-sm" href="#how">${t('How it works')}</a>

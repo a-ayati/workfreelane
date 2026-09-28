@@ -30,7 +30,7 @@ let notifOpen = false;
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 // Language switch used on every page (app, auth, landing).
-export const langSwitch = (cls = 'btn btn-ghost btn-sm') => html`<button class="${cls}" data-action="lang-toggle" lang="${lang() === 'ar' ? 'en' : 'ar'}" aria-label="${lang() === 'ar' ? 'Switch to English' : 'التبديل إلى العربية'}">${lang() === 'ar' ? 'English' : 'العربية'}</button>`;
+export const langSwitch = (cls = 'btn btn-ghost btn-sm') => html`<button class="${cls}" data-action="lang-toggle" lang="${lang() === 'ar' ? 'en' : 'ar'}" aria-label="${lang() === 'ar' ? 'Switch to English' : 'التبديل إلى العربية'}"><span class="lang-full">${lang() === 'ar' ? 'English' : 'العربية'}</span><span class="lang-short" aria-hidden="true">${lang() === 'ar' ? 'EN' : 'ع'}</span></button>`;
 
 export const themeSwitch = () => {
   const cur = getTheme();
