@@ -1,16 +1,18 @@
 import { html, raw, field, onAction, onForm, go, toast, href } from '../ui.js';
 import { auth } from '../core/auth.js';
+import { t } from '../core/i18n.js';
 import { UserError } from '../core/util.js';
 import { completeOnboarding } from '../services/core.js';
 import { DISCIPLINES, CURRENCIES } from '../services/constants.js';
+import { langSwitch } from './shell.js';
 
 const state = { step: 1, disciplines: [], services: '', currency: 'QAR', businessName: '', logo: '' };
 const TOTAL = 6;
 
 export function resizeImage(file, max = 256) {
   return new Promise((resolve, reject) => {
-    if (!file || !file.type.startsWith('image/')) return reject(new UserError('Please choose an image file (PNG, JPG or SVG).'));
-    if (file.size > 8 * 1024 * 1024) return reject(new UserError('That image is larger than 8 MB.'));
+    if (!file || !file.type.startsWith('image/')) return reject(new UserError(t('Please choose an image file (PNG, JPG or SVG).')));
+    if (file.size > 8 * 1024 * 1024) return reject(new UserError(t('That image is larger than 8 MB.')));
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
@@ -21,46 +23,46 @@ export function resizeImage(file, max = 256) {
       URL.revokeObjectURL(url);
       resolve(c.toDataURL('image/png'));
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new UserError('We could not read that image. Try another file.')); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new UserError(t('We could not read that image. Try another file.'))); };
     img.src = url;
   });
 }
 
 export function onboarding() {
   const u = auth.requireUser();
-  if (!state.businessName) state.businessName = `${u.name} Studio`;
+  if (!state.businessName) state.businessName = t('{name} Studio', { name: u.name });
   const s = state.step;
-  const steps = html`<div class="onb-steps" aria-label="Step ${s} of ${TOTAL}">${Array.from({ length: TOTAL }, (_, i) => html`<span class="${i < s ? 'on' : ''}"></span>`)}</div>`;
-  const nav = (next = 'Continue', skip = false) => html`<div class="form-actions" style="justify-content:space-between">
-    ${s > 1 ? html`<button type="button" class="btn btn-ghost" data-action="onb-back">Back</button>` : html`<span></span>`}
-    <span class="btn-row">${skip ? html`<button type="button" class="btn btn-ghost" data-action="onb-skip">Skip for now</button>` : ''}<button class="btn btn-primary" type="submit">${next}</button></span></div>`;
+  const steps = html`<div class="onb-steps" aria-label="${t('Step {n} of {total}', { n: s, total: TOTAL })}">${Array.from({ length: TOTAL }, (_, i) => html`<span class="${i < s ? 'on' : ''}"></span>`)}</div>`;
+  const nav = (next = t('Continue'), skip = false) => html`<div class="form-actions" style="justify-content:space-between">
+    ${s > 1 ? html`<button type="button" class="btn btn-ghost" data-action="onb-back">${t('Back')}</button>` : html`<span></span>`}
+    <span class="btn-row">${skip ? html`<button type="button" class="btn btn-ghost" data-action="onb-skip">${t('Skip for now')}</button>` : ''}<button class="btn btn-primary" type="submit">${next}</button></span></div>`;
   let body;
-  if (s === 1) body = html`<h1>What type of freelancer are you?</h1><p class="muted">Choose all that apply.</p>
-    <form data-form="onb" class="form-stack"><div class="chips" role="group" aria-label="Freelancer type">${DISCIPLINES.map((d) => html`<label class="chip"><input type="checkbox" name="disciplines[]" value="${d}"${state.disciplines.includes(d) ? raw(' checked') : ''}><span>${d}</span></label>`)}</div>${nav()}</form>`;
-  if (s === 2) body = html`<h1>What services do you offer?</h1><p class="muted">One per line. These help pre-fill proposals.</p>
-    <form data-form="onb" class="form-stack">${field({ label: 'Services', name: 'services', type: 'textarea', rows: 6, value: state.services, placeholder: 'Brand identity\nSocial media content\nPromotional videos' })}${nav('Continue', true)}</form>`;
-  if (s === 3) body = html`<h1>Which currency do you invoice in?</h1><p class="muted">You can change this later in Settings.</p>
-    <form data-form="onb" class="form-stack"><div class="chips" role="radiogroup" aria-label="Currency">${CURRENCIES.map((c) => html`<label class="chip"><input type="radio" name="currency" value="${c}"${state.currency === c ? raw(' checked') : ''}><span>${c}</span></label>`)}</div>${nav()}</form>`;
-  if (s === 4) body = html`<h1>What's your business called?</h1><p class="muted">Shown on proposals, contracts, invoices and your client portal.</p>
-    <form data-form="onb" class="form-stack">${field({ label: 'Business name', name: 'businessName', value: state.businessName, required: true })}${nav()}</form>`;
-  if (s === 5) body = html`<h1>Add a profile photo or logo</h1><p class="muted">Optional. Square images work best.</p>
+  if (s === 1) body = html`<h1>${t('What type of freelancer are you?')}</h1><p class="muted">${t('Choose all that apply.')}</p>
+    <form data-form="onb" class="form-stack"><div class="chips" role="group" aria-label="${t('Freelancer type')}">${DISCIPLINES.map((d) => html`<label class="chip"><input type="checkbox" name="disciplines[]" value="${d}"${state.disciplines.includes(d) ? raw(' checked') : ''}><span>${t(d)}</span></label>`)}</div>${nav()}</form>`;
+  if (s === 2) body = html`<h1>${t('What services do you offer?')}</h1><p class="muted">${t('One per line. These help pre-fill proposals.')}</p>
+    <form data-form="onb" class="form-stack">${field({ label: t('Services'), name: 'services', type: 'textarea', rows: 6, value: state.services, placeholder: t('Brand identity\nSocial media content\nPromotional videos') })}${nav(t('Continue'), true)}</form>`;
+  if (s === 3) body = html`<h1>${t('Which currency do you invoice in?')}</h1><p class="muted">${t('You can change this later in Settings.')}</p>
+    <form data-form="onb" class="form-stack"><div class="chips" role="radiogroup" aria-label="${t('Currency')}">${CURRENCIES.map((c) => html`<label class="chip"><input type="radio" name="currency" value="${c}"${state.currency === c ? raw(' checked') : ''}><span>${c}</span></label>`)}</div>${nav()}</form>`;
+  if (s === 4) body = html`<h1>${t("What's your business called?")}</h1><p class="muted">${t('Shown on proposals, contracts, invoices and your client portal.')}</p>
+    <form data-form="onb" class="form-stack">${field({ label: t('Business name'), name: 'businessName', value: state.businessName, required: true })}${nav()}</form>`;
+  if (s === 5) body = html`<h1>${t('Add a profile photo or logo')}</h1><p class="muted">${t('Optional. Square images work best.')}</p>
     <form data-form="onb" class="form-stack">
-      <div class="btn-row">${state.logo ? html`<img class="logo-preview" src="${state.logo}" alt="Logo preview">` : html`<div class="logo-preview" aria-hidden="true"></div>`}
-      <label class="btn btn-secondary">Choose image<input type="file" accept="image/*" data-change="onb-logo" class="sr-only"></label>
-      ${state.logo ? html`<button type="button" class="btn btn-ghost" data-action="onb-logo-clear">Remove</button>` : ''}</div>
-      ${nav('Finish setup', true)}</form>`;
-  if (s === 6) body = html`<h1>You're set up.</h1><p class="muted">Create your first project now, or explore the dashboard first.</p>
-    <div class="form-actions" style="justify-content:flex-start;margin-top:28px"><a class="btn btn-primary btn-lg" href="${href('/projects/new')}">+ Create first project</a><a class="btn btn-ghost btn-lg" href="${href('/dashboard')}">Skip for now</a></div>`;
-  return html`<div class="onb"><a class="brand" href="${href('/')}" style="padding:0 0 32px"><img src="assets/icon.svg" alt="">Scopewise</a>${steps}${body}</div>`;
+      <div class="btn-row">${state.logo ? html`<img class="logo-preview" src="${state.logo}" alt="${t('Logo preview')}">` : html`<div class="logo-preview" aria-hidden="true"></div>`}
+      <label class="btn btn-secondary">${t('Choose image')}<input type="file" accept="image/*" data-change="onb-logo" class="sr-only"></label>
+      ${state.logo ? html`<button type="button" class="btn btn-ghost" data-action="onb-logo-clear">${t('Remove')}</button>` : ''}</div>
+      ${nav(t('Finish setup'), true)}</form>`;
+  if (s === 6) body = html`<h1>${t("You're set up.")}</h1><p class="muted">${t('Create your first project now, or explore the dashboard first.')}</p>
+    <div class="form-actions" style="justify-content:flex-start;margin-top:28px"><a class="btn btn-primary btn-lg" href="${href('/projects/new')}">${t('+ Create first project')}</a><a class="btn btn-ghost btn-lg" href="${href('/dashboard')}">${t('Skip for now')}</a></div>`;
+  return html`<div class="onb"><div class="btn-row" style="justify-content:space-between;padding-bottom:32px"><a class="brand" href="${href('/')}" style="padding:0"><img src="assets/icon.svg" alt="">Scopewise</a>${langSwitch()}</div>${steps}${body}</div>`;
 }
 
 function advance(values) {
   const s = state.step;
-  if (s === 1) { state.disciplines = values.disciplines || []; if (!state.disciplines.length) throw new UserError('Choose at least one option.'); }
+  if (s === 1) { state.disciplines = values.disciplines || []; if (!state.disciplines.length) throw new UserError(t('Choose at least one option.')); }
   if (s === 2) state.services = values.services || '';
   if (s === 3) state.currency = values.currency || state.currency;
-  if (s === 4) { state.businessName = (values.businessName || '').trim(); if (!state.businessName) throw new UserError('Business name is required.', 'businessName'); }
-  if (s === 5) { completeOnboarding(state); toast('Your workspace is ready.'); }
+  if (s === 4) { state.businessName = (values.businessName || '').trim(); if (!state.businessName) throw new UserError(t('Business name is required.'), 'businessName'); }
+  if (s === 5) { completeOnboarding(state); toast(t('Your workspace is ready.')); }
   state.step = Math.min(TOTAL, s + 1);
 }
 

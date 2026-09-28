@@ -2,6 +2,7 @@
 // Supports timestamped comments on video/audio and pinned comments on images.
 import { html, raw, icon, openModal, closeModal, refreshModal, modalHead, onAction, onForm, toast, rerender } from '../ui.js';
 import { db } from '../core/store.js';
+import { t } from '../core/i18n.js';
 import { fmtTimecode, fmtRelative, fmtBytes, humanError } from '../core/util.js';
 import { blobURLFor, fileKind, versionsOf, listFeedback, addFeedback, portalAddFeedback, setFeedbackStatus, portalDownloaded } from '../services/delivery.js';
 
@@ -43,6 +44,8 @@ export async function download(versionId, ctx = {}) {
   if (ctx.token) portalDownloaded(ctx.projectId, ctx.token, versionId);
 }
 
+export const verLabel = (v) => (v?.isFinal ? t('Final') : v?.label || '');
+
 // ---------------- Viewer modal ----------------
 let vs = null; // viewer state
 
@@ -54,7 +57,7 @@ export function openViewer(versionId, ctx = {}) {
 
 function renderViewer() {
   const v = db.get('fileVersions', vs.versionId);
-  if (!v) return html`${modalHead('File')}<p>This file is no longer available.</p>`;
+  if (!v) return html`${modalHead(t('File'))}<p>${t('This file is no longer available.')}</p>`;
   const f = db.get('files', v.fileId);
   const kind = fileKind(v);
   const isClient = !!vs.ctx.token;
@@ -63,32 +66,32 @@ function renderViewer() {
   const pins = comments.filter((c) => c.pinX != null);
   let media;
   if (vs.error) media = html`<div class="stage-empty">${vs.error}</div>`;
-  else if (!vs.url) media = html`<div class="stage-empty">Loading…</div>`;
+  else if (!vs.url) media = html`<div class="stage-empty">${t('Loading…')}</div>`;
   else if (kind === 'video') media = html`<video id="viewer-media" src="${vs.url}" controls playsinline></video>`;
   else if (kind === 'audio') media = html`<div style="padding:40px;width:100%"><audio id="viewer-media" src="${vs.url}" controls style="width:100%"></audio></div>`;
   else if (kind === 'image') media = html`<div style="position:relative;display:inline-block"><img id="viewer-media" src="${vs.url}" alt="${f.name}" data-action="viewer-pin">
       <div class="pin-layer" style="pointer-events:none">${pins.map((c, i) => html`<span class="pin" style="left:${c.pinX}%;top:${c.pinY}%" title="${c.comment}">${i + 1}</span>`)}${vs.pin ? html`<span class="pin pending" style="left:${vs.pin.x}%;top:${vs.pin.y}%">+</span>` : ''}</div></div>`;
   else if (kind === 'pdf') media = html`<iframe src="${vs.url}" title="${f.name}" style="width:100%;height:65vh;border:0;background:#fff"></iframe>`;
-  else media = html`<div class="stage-empty">No preview for this file type.<br><br><button class="btn btn-secondary btn-sm" data-action="viewer-download">Download to view</button></div>`;
+  else media = html`<div class="stage-empty">${t('No preview for this file type.')}<br><br><button class="btn btn-secondary btn-sm" data-action="viewer-download">${t('Download to view')}</button></div>`;
 
-  const hint = kind === 'video' || kind === 'audio' ? 'Your comment is pinned to the current playback time.' : kind === 'image' ? 'Click the image to pin your comment to a spot.' : 'Add a page, section or frame reference if helpful.';
-  return html`${modalHead(`${f.name} · ${v.label}`, `${fmtBytes(v.size)} · uploaded ${fmtRelative(v.createdAt)} by ${v.uploaderName}`)}
-    <div class="versions" style="margin:-8px 0 14px">${versions.map((x) => html`<button class="ver${x.isFinal ? ' final' : ''}" data-action="viewer-version" data-id="${x.id}"${x.id === v.id ? raw(' aria-current="true" style="outline:2px solid var(--ink)"') : ''}>${x.label}</button>`)}</div>
+  const hint = t(kind === 'video' || kind === 'audio' ? 'Your comment is pinned to the current playback time.' : kind === 'image' ? 'Click the image to pin your comment to a spot.' : 'Add a page, section or frame reference if helpful.');
+  return html`${modalHead(`${f.name} · ${verLabel(v)}`, t('{size} · uploaded {when} by {name}', { size: fmtBytes(v.size), when: fmtRelative(v.createdAt), name: v.uploaderName }))}
+    <div class="versions" style="margin:-8px 0 14px">${versions.map((x) => html`<button class="ver${x.isFinal ? ' final' : ''}" data-action="viewer-version" data-id="${x.id}"${x.id === v.id ? raw(' aria-current="true" style="outline:2px solid var(--ink)"') : ''}>${verLabel(x)}</button>`)}</div>
     <div class="viewer">
       <div class="stage${kind === 'image' ? ' pinnable' : ''}">${media}</div>
       <div>
-        <div class="comments" aria-label="Comments">${comments.length ? comments.map((c, i) => html`<div class="comment${c.status === 'resolved' ? ' resolved' : ''}">
+        <div class="comments" aria-label="${t('Comments')}">${comments.length ? comments.map((c, i) => html`<div class="comment${c.status === 'resolved' ? ' resolved' : ''}">
             <div class="comment-meta"><span><b>${c.authorName}</b> · ${fmtRelative(c.createdAt)}</span>
-              <span>${c.timecode != null ? html`<button class="tc" data-action="viewer-seek" data-t="${c.timecode}">${fmtTimecode(c.timecode)}</button>` : ''}${c.pinX != null ? html`<span class="tc">#${pins.indexOf(c) + 1}</span>` : ''}${c.reference ? html`<span class="tc">${c.reference}</span>` : ''}</span></div>
+              <span>${c.timecode != null ? html`<button class="tc" dir="ltr" data-action="viewer-seek" data-t="${c.timecode}">${fmtTimecode(c.timecode)}</button>` : ''}${c.pinX != null ? html`<span class="tc">#${pins.indexOf(c) + 1}</span>` : ''}${c.reference ? html`<span class="tc">${c.reference}</span>` : ''}</span></div>
             <div>${c.comment}</div>
-            ${!isClient ? html`<button class="link-btn small" data-action="viewer-resolve" data-id="${c.id}" data-status="${c.status === 'open' ? 'resolved' : 'open'}">${c.status === 'open' ? 'Mark resolved' : 'Reopen'}</button>` : c.status === 'resolved' ? html`<span class="small muted">Resolved</span>` : ''}
-          </div>`) : html`<p class="muted small">No comments on this version yet.</p>`}</div>
+            ${!isClient ? html`<button class="link-btn small" data-action="viewer-resolve" data-id="${c.id}" data-status="${c.status === 'open' ? 'resolved' : 'open'}">${c.status === 'open' ? t('Mark resolved') : t('Reopen')}</button>` : c.status === 'resolved' ? html`<span class="small muted">${t('Resolved')}</span>` : ''}
+          </div>`) : html`<p class="muted small">${t('No comments on this version yet.')}</p>`}</div>
         <form class="form-stack" data-form="viewer-comment" style="gap:8px;margin-top:12px">
-          ${isClient ? html`<input name="name" placeholder="Your name" aria-label="Your name" value="${vs.ctx.name || ''}" required>` : ''}
-          <textarea name="comment" rows="3" placeholder="${kind === 'video' ? 'e.g. Please replace this shot.' : 'Add a comment…'}" aria-label="Comment" required></textarea>
-          ${kind !== 'video' && kind !== 'audio' && kind !== 'image' ? html`<input name="reference" placeholder="Page / section / frame (optional)" aria-label="Reference">` : ''}
-          <small class="muted">${hint}${vs.pin ? ' Pin placed.' : ''}</small>
-          <div class="btn-row"><button class="btn btn-primary btn-sm" type="submit">Add comment</button><button type="button" class="btn btn-ghost btn-sm" data-action="viewer-download">${icon('download', 14)} Download</button></div>
+          ${isClient ? html`<input name="name" placeholder="${t('Your name')}" aria-label="${t('Your name')}" value="${vs.ctx.name || ''}" required>` : ''}
+          <textarea name="comment" rows="3" placeholder="${kind === 'video' ? t('e.g. Please replace this shot.') : t('Add a comment…')}" aria-label="${t('Comment')}" required></textarea>
+          ${kind !== 'video' && kind !== 'audio' && kind !== 'image' ? html`<input name="reference" placeholder="${t('Page / section / frame (optional)')}" aria-label="${t('Reference')}">` : ''}
+          <small class="muted">${hint}${vs.pin ? ` ${t('Pin placed.')}` : ''}</small>
+          <div class="btn-row"><button class="btn btn-primary btn-sm" type="submit">${t('Add comment')}</button><button type="button" class="btn btn-ghost btn-sm" data-action="viewer-download">${icon('download', 14)} ${t('Download')}</button></div>
         </form>
       </div>
     </div>`;
@@ -116,11 +119,11 @@ onForm({
     const f = db.get('files', db.get('fileVersions', vs.versionId).fileId);
     if (vs.ctx.token) { portalAddFeedback(vs.ctx.projectId, vs.ctx.token, data); vs.ctx.name = v.name; } else addFeedback(f.projectId, data);
     vs.pin = null;
-    const t = m?.currentTime;
+    const at = m?.currentTime;
     refreshModal(); rerender();
     const m2 = document.getElementById('viewer-media');
-    if (m2 && t) m2.addEventListener('loadedmetadata', () => { m2.currentTime = t; }, { once: true });
-    toast('Comment added.');
+    if (m2 && at) m2.addEventListener('loadedmetadata', () => { m2.currentTime = at; }, { once: true });
+    toast(t('Comment added.'));
     return false;
   },
 });

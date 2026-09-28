@@ -33,6 +33,16 @@ BASE=http://localhost:5173/ node tests/e2e.mjs
 
 It covers these steps: register, reject a weak password, onboarding, email verification, create a client, create a project from a template, draft the brief with the AI assistant (the user reviews and applies it), create and send a proposal. It then covers the client side: an invalid link is refused, the client accepts the proposal and then the contract (on a mobile viewport), and the freelancer records the deposit so the project becomes active. The rest of the flow is: upload a file, send it for review, the client leaves a pinned comment and requests a revision, a v02 version is uploaded, approval is requested, the client approves (the approval is recorded with name and version), final files are delivered and a final invoice is drafted, the invoice is sent, the client reports a payment and the freelancer confirms it, the project is completed and added to the portfolio. The test also checks the activity log, global search, plan gating, that one project's link cannot open another project, protected routes, and that there are no console errors. The results are written to `tests/e2e-results.txt`.
 
+## Arabic & English
+
+The whole app is bilingual, with full right-to-left layout in Arabic.
+
+- **Freelancer language:** switch with the English/العربية button (sidebar, auth pages, landing) or in Settings → Language.
+- **Client language:** set per client (client profile, or when creating a client). The client portal, proposals, contracts, invoices and client emails use it. The client can also switch the portal language themselves.
+- **Contract templates:** there are two, one in English and one in Arabic (Settings → Contract Templates). A client receives the template in their own language.
+- **Activity and notifications** are stored as templates plus variables, so the same history reads correctly in either language.
+- **Translations:** they live in `js/i18n/ar-*.js`, keyed by the English source string. Run `node tools/i18n-keys.mjs --missing` to list strings that still need a translation.
+
 ## Architecture
 
 | Layer | Where | Notes |

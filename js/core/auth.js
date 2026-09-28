@@ -3,6 +3,7 @@
 import { db } from './store.js';
 import { mailer, appLink } from './mailer.js';
 import { UserError, AuthError, email as vEmail, req, randomToken, clock, nowISO } from './util.js';
+import { t, tl, uiLang } from './i18n.js';
 
 const SESSION_KEY = 'sw.session';
 const SESSION_DAYS = 30;
@@ -26,9 +27,9 @@ function safeEqual(a, b) {
   return r === 0;
 }
 function validatePassword(pw) {
-  if (!pw || pw.length < 8) throw new UserError('Use at least 8 characters for your password.', 'password');
-  if (pw.length > 200) throw new UserError('That password is too long.', 'password');
-  if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) throw new UserError('Use a mix of letters and numbers in your password.', 'password');
+  if (!pw || pw.length < 8) throw new UserError(t('Use at least 8 characters for your password.'), 'password');
+  if (pw.length > 200) throw new UserError(t('That password is too long.'), 'password');
+  if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) throw new UserError(t('Use a mix of letters and numbers in your password.'), 'password');
 }
 
 // Rate limiting: count recent attempts per key+kind.
@@ -47,11 +48,11 @@ function issueEmailToken(userId, type, hours) {
   return token;
 }
 function consumeEmailToken(token, type) {
-  const t = db.find('emailTokens', (r) => r.type === type && safeEqual(r.token, String(token || '')));
-  if (!t || t.usedAt) throw new UserError('This link is invalid or has already been used.');
-  if (new Date(t.expiresAt) < new Date()) throw new UserError('This link has expired. Please request a new one.');
-  db.update('emailTokens', t.id, { usedAt: nowISO() });
-  return t;
+  const tok = db.find('emailTokens', (r) => r.type === type && safeEqual(r.token, String(token || '')));
+  if (!tok || tok.usedAt) throw new UserError(t('This link is invalid or has already been used.'));
+  if (new Date(tok.expiresAt) < new Date()) throw new UserError(t('This link has expired. Please request a new one.'));
+  db.update('emailTokens', tok.id, { usedAt: nowISO() });
+  return tok;
 }
 
 function startSession(userId) {
@@ -66,10 +67,11 @@ const storedToken = () => { try { return localStorage.getItem(SESSION_KEY) || me
 
 export function sendVerification(user) {
   const token = issueEmailToken(user.id, 'verify', 48);
+  const L = user.lang || uiLang();
   return mailer.send({
-    to: user.email, kind: 'verify', subject: 'Verify your email address',
-    body: `Hi ${user.name},\n\nConfirm your email address to secure your Scopewise account.`,
-    link: appLink(`/verify?token=${token}`), linkLabel: 'Verify email',
+    to: user.email, kind: 'verify', subject: tl(L, 'Verify your email address'),
+    body: tl(L, 'Hi {name},\n\nConfirm your email address to secure your Scopewise account.', { name: user.name }),
+    link: appLink(`/verify?token=${token}`), linkLabel: tl(L, 'Verify email'),
   });
 }
 
@@ -90,22 +92,22 @@ export const auth = {
     name = req(name, 'Name', 'name', 120);
     email = vEmail(email);
     validatePassword(password);
-    if (db.find('users', (u) => u.email === email)) throw new UserError('An account with this email already exists. Try signing in instead.', 'email');
-    if (!['freelancer'].includes(role)) throw new UserError('Only freelancer accounts can be created right now.');
+    if (db.find('users', (u) => u.email === email)) throw new UserError(t('An account with this email already exists. Try signing in instead.'), 'email');
+    if (!['freelancer'].includes(role)) throw new UserError(t('Only freelancer accounts can be created right now.'));
     const { hash, salt } = await hashPassword(password);
-    const user = db.insert('users', { name, email, passwordHash: hash, salt, role, emailVerified: false, onboarded: false });
+    const user = db.insert('users', { name, email, passwordHash: hash, salt, role, emailVerified: false, onboarded: false, lang: uiLang() });
     sendVerification(user);
     startSession(user.id);
     return user;
   },
   async login({ email, password }) {
     email = vEmail(email);
-    guard(email, 'login-fail', MAX_FAILS, `Too many sign-in attempts. Please wait ${WINDOW_MIN} minutes and try again.`);
+    guard(email, 'login-fail', MAX_FAILS, t('Too many sign-in attempts. Please wait {n} minutes and try again.', { n: WINDOW_MIN }));
     const user = db.find('users', (u) => u.email === email);
     const { hash } = await hashPassword(String(password || ''), user?.salt);
     if (!user || !safeEqual(hash, user.passwordHash)) {
       recordAttempt(email, 'login-fail');
-      throw new UserError('That email and password combination is not correct.');
+      throw new UserError(t('That email and password combination is not correct.'));
     }
     startSession(user.id);
     return user;
@@ -119,34 +121,35 @@ export const auth = {
   },
   requestPasswordReset(emailAddr) {
     const e = vEmail(emailAddr);
-    guard(e, 'reset', 3, 'Too many reset requests. Please wait a few minutes and try again.');
+    guard(e, 'reset', 3, t('Too many reset requests. Please wait a few minutes and try again.'));
     recordAttempt(e, 'reset');
     const user = db.find('users', (u) => u.email === e);
     if (user) {
       const token = issueEmailToken(user.id, 'reset', 1);
+      const L = user.lang || uiLang();
       mailer.send({
-        to: user.email, kind: 'reset', subject: 'Reset your password',
-        body: `Hi ${user.name},\n\nWe received a request to reset your password. This link expires in 1 hour. If you didn't ask for this, you can ignore this email.`,
-        link: appLink(`/reset?token=${token}`), linkLabel: 'Choose a new password',
+        to: user.email, kind: 'reset', subject: tl(L, 'Reset your password'),
+        body: tl(L, "Hi {name},\n\nWe received a request to reset your password. This link expires in 1 hour. If you didn't ask for this, you can ignore this email.", { name: user.name }),
+        link: appLink(`/reset?token=${token}`), linkLabel: tl(L, 'Choose a new password'),
       });
     }
     // Same response whether or not the account exists.
   },
   async resetPassword(token, password) {
     validatePassword(password);
-    const t = consumeEmailToken(token, 'reset');
+    const tok = consumeEmailToken(token, 'reset');
     const { hash, salt } = await hashPassword(password);
-    db.update('users', t.userId, { passwordHash: hash, salt });
-    db.all('sessions', (s) => s.userId === t.userId).forEach((s) => db.remove('sessions', s.id));
+    db.update('users', tok.userId, { passwordHash: hash, salt });
+    db.all('sessions', (s) => s.userId === tok.userId).forEach((s) => db.remove('sessions', s.id));
   },
   verifyEmail(token) {
-    const t = consumeEmailToken(token, 'verify');
-    return db.update('users', t.userId, { emailVerified: true });
+    const tok = consumeEmailToken(token, 'verify');
+    return db.update('users', tok.userId, { emailVerified: true });
   },
   async changePassword(current, next) {
     const user = auth.requireUser();
     const { hash } = await hashPassword(String(current || ''), user.salt);
-    if (!safeEqual(hash, user.passwordHash)) throw new UserError('Your current password is not correct.', 'current');
+    if (!safeEqual(hash, user.passwordHash)) throw new UserError(t('Your current password is not correct.'), 'current');
     validatePassword(next);
     const h = await hashPassword(next);
     db.update('users', user.id, { passwordHash: h.hash, salt: h.salt });
@@ -158,12 +161,13 @@ export const auth = {
     if ('email' in patch) {
       const e = vEmail(patch.email);
       if (e !== user.email) {
-        if (db.find('users', (u) => u.email === e)) throw new UserError('That email is already in use.', 'email');
+        if (db.find('users', (u) => u.email === e)) throw new UserError(t('That email is already in use.'), 'email');
         clean.email = e;
         clean.emailVerified = false;
       }
     }
     if ('onboarded' in patch) clean.onboarded = !!patch.onboarded;
+    if ('lang' in patch) clean.lang = patch.lang === 'ar' ? 'ar' : 'en';
     const u = db.update('users', user.id, clean);
     if (clean.email) sendVerification(u);
     return u;

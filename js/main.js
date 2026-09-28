@@ -2,6 +2,7 @@
 import { initStore, onRemoteChange } from './core/store.js';
 import { auth } from './core/auth.js';
 import { humanError } from './core/util.js';
+import { t, setActiveLang, uiLang } from './core/i18n.js';
 import { html, route, match, parseHash, setRenderer, installDelegation, rerender, go, href, isDirty, toast, empty, closeModal } from './ui.js';
 import { maybeBusiness } from './services/context.js';
 import { appShell } from './views/shell.js';
@@ -13,7 +14,7 @@ import { proposalsList, proposalDetail, contractsList, invoicesList, invoiceDeta
 import { clientsList, clientDetail } from './views/clients.js';
 import { portfolioList, portfolioEdit, portfolioPreview, analyticsView, aiView, filesIndex, searchView, notificationsView } from './views/growth.js';
 import { settingsView } from './views/settings.js';
-import { portal } from './views/portal.js';
+import { portal, portalLang } from './views/portal.js';
 import { hydrateBlobs } from './views/viewer.js';
 
 // layout: public | auth (signed-out only) | onboarding | app (signed-in + onboarded) | portal
@@ -53,7 +54,7 @@ const root = document.getElementById('app');
 let lastPath = null;
 
 function errorPage(err, inApp) {
-  const body = empty({ title: err?.name === 'ForbiddenError' ? 'No access' : err?.name === 'NotFoundError' ? 'Not found' : 'Something went wrong', body: humanError(err, 'Something went wrong while loading this page. Please try again.'), cta: html`<a class="btn btn-primary" href="${href(inApp ? '/dashboard' : '/')}">Go ${inApp ? 'to dashboard' : 'home'}</a>` });
+  const body = empty({ title: err?.name === 'ForbiddenError' ? t('No access') : err?.name === 'NotFoundError' ? t('Not found') : t('Something went wrong'), body: humanError(err, t('Something went wrong while loading this page. Please try again.')), cta: html`<a class="btn btn-primary" href="${href(inApp ? '/dashboard' : '/')}">${inApp ? t('Go to dashboard') : t('Go home')}</a>` });
   return inApp ? body : html`<main style="max-width:560px;margin:10vh auto;padding:0 16px">${body}</main>`;
 }
 
@@ -61,7 +62,8 @@ function render() {
   const { path, query } = parseHash();
   const m = match(path);
   const user = auth.currentUser();
-  if (!m) { root.innerHTML = String(errorPage({ name: 'NotFoundError', userFacing: true, message: "This page doesn't exist." }, !!user)); return; }
+  setActiveLang(m?.handler.layout === 'portal' ? portalLang(m.params.pid) : uiLang());
+  if (!m) { root.innerHTML = String(errorPage({ name: 'NotFoundError', userFacing: true, message: t("This page doesn't exist.") }, !!user)); return; }
   const { layout, view, nav, title } = m.handler;
 
   // Guards
@@ -71,7 +73,7 @@ function render() {
   if (layout === 'onboarding' && user.onboarded && maybeBusiness() && !onboardingDone()) return go('/dashboard');
 
   if (path !== lastPath) { closeModal(); }
-  document.title = `${title} — Scopewise`;
+  document.title = `${t(title)} — Scopewise`;
   let out;
   try {
     const body = view(m.params, query);
@@ -80,6 +82,7 @@ function render() {
     out = layout === 'app' ? appShell(errorPage(err, true), nav) : errorPage(err, false);
   }
   root.innerHTML = String(out);
+  const skip = document.querySelector('.skip-link'); if (skip) skip.textContent = t('Skip to content');
   hydrateBlobs(root);
   if (path !== lastPath) {
     window.scrollTo(0, 0);
@@ -93,15 +96,16 @@ async function boot() {
     await initStore();
   } catch (e) {
     console.error(e);
-    root.innerHTML = '<p style="padding:24px">Scopewise could not open its local storage. Please reload the page, or try another browser.</p>';
+    root.innerHTML = `<p style="padding:24px">${t('Scopewise could not open its local storage. Please reload the page, or try another browser.')}</p>`;
     return;
   }
+  setActiveLang(uiLang());
   setRenderer(render);
   installDelegation();
   window.addEventListener('hashchange', render);
   // Keep tabs in sync (e.g. freelancer app + client portal preview in another tab).
   onRemoteChange(() => {
-    if (isDirty() || document.querySelector('#modal-root .modal')) { toast('New activity arrived — it will show when you continue.'); return; }
+    if (isDirty() || document.querySelector('#modal-root .modal')) { toast(t('New activity arrived — it will show when you continue.')); return; }
     rerender();
   });
   render();

@@ -1,6 +1,7 @@
 // UI runtime: router, delegated actions/forms, modals, toasts and shared components.
 import { html, raw, esc } from './core/html.js';
 import { humanError, fmtMoney, initials } from './core/util.js';
+import { t } from './core/i18n.js';
 
 // ---------------- Icons ----------------
 const P = {
@@ -31,7 +32,7 @@ const P = {
   mail: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2M22 6l-10 7L2 6', logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
   pin: 'M12 22s-7-7.5-7-12a7 7 0 1 1 14 0c0 4.5-7 12-7 12M12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5',
 };
-export const icon = (name, size = 18) => raw(`<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${P[name] || ''}"/></svg>`);
+export const icon = (name, size = 18) => raw(`<svg class="icon${name === 'arrow' || name === 'back' ? ' icon-dir' : ''}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${P[name] || ''}"/></svg>`);
 
 // ---------------- Router ----------------
 const routes = [];
@@ -193,31 +194,31 @@ function trapFocus(ev) {
 }
 onAction({ 'modal-close': () => { closeModal(); return false; } });
 
-export const modalHead = (title, sub) => html`<div class="modal-head"><div><h2 id="modal-title">${title}</h2>${sub ? html`<p class="muted">${sub}</p>` : ''}</div><button class="icon-btn modal-x" data-action="modal-close" aria-label="Close">${icon('x')}</button></div>`;
+export const modalHead = (title, sub) => html`<div class="modal-head"><div><h2 id="modal-title">${title}</h2>${sub ? html`<p class="muted">${sub}</p>` : ''}</div><button class="icon-btn modal-x" data-action="modal-close" aria-label="${t('Close')}">${icon('x')}</button></div>`;
 
 // Confirmation dialog returning a promise.
-export function confirmDialog({ title, body, confirm = 'Confirm', tone = 'primary', requireText = '' }) {
+export function confirmDialog({ title, body, confirm = t('Confirm'), tone = 'primary', requireText = '' }) {
   return new Promise((resolve) => {
     onAction({
       'confirm-yes': () => {
         if (requireText) {
           const v = document.querySelector('#confirm-text')?.value.trim();
-          if (v !== requireText) { toast(`Type "${requireText}" to confirm.`, 'error'); return false; }
+          if (v !== requireText) { toast(t('Type "{text}" to confirm.', { text: requireText }), 'error'); return false; }
         }
         closeModal(); resolve(true); return false;
       },
       'confirm-no': () => { closeModal(); resolve(false); return false; },
     });
     openModal(html`${modalHead(title)}<p class="modal-text">${body}</p>
-      ${requireText ? html`<label class="field"><span>Type <strong>${requireText}</strong> to confirm</span><input id="confirm-text" autocomplete="off"></label>` : ''}
-      <div class="modal-actions"><button class="btn btn-ghost" data-action="confirm-no">Cancel</button><button class="btn btn-${tone}" data-action="confirm-yes">${confirm}</button></div>`, { size: 'sm' });
+      ${requireText ? html`<label class="field"><span>${t('Type {text} to confirm', { text: requireText })}</span><input id="confirm-text" autocomplete="off"></label>` : ''}
+      <div class="modal-actions"><button class="btn btn-ghost" data-action="confirm-no">${t('Cancel')}</button><button class="btn btn-${tone}" data-action="confirm-yes">${confirm}</button></div>`, { size: 'sm' });
   });
 }
 
 // ---------------- Components ----------------
 export const pill = (map, status) => {
   const s = map[status] || { label: status, tone: 'neutral' };
-  return html`<span class="pill pill-${s.tone}"><span class="dot" aria-hidden="true"></span>${s.label}</span>`;
+  return html`<span class="pill pill-${s.tone}"><span class="dot" aria-hidden="true"></span>${t(s.label)}</span>`;
 };
 export const moneyEl = (n, cur) => html`<span class="num">${fmtMoney(n, cur)}</span>`;
 export const avatar = (name, img, size = 32) => img
@@ -239,7 +240,7 @@ export function empty({ title, body, cta }) {
 }
 
 export function progressBar(value, label) {
-  return html`<div class="progress" role="progressbar" aria-valuenow="${value}" aria-valuemin="0" aria-valuemax="100" aria-label="${label || 'Progress'}"><span style="width:${Math.max(0, Math.min(100, value))}%"></span></div>`;
+  return html`<div class="progress" role="progressbar" aria-valuenow="${value}" aria-valuemin="0" aria-valuemax="100" aria-label="${label || t('Progress')}"><span style="width:${Math.max(0, Math.min(100, value))}%"></span></div>`;
 }
 
 export function field({ label, name, value = '', type = 'text', required, placeholder, hint, rows, options, attrs = '', full }) {
@@ -252,8 +253,8 @@ export function field({ label, name, value = '', type = 'text', required, placeh
 }
 
 export function tabs(items, active) {
-  return html`<nav class="tabs" aria-label="Sections"><div class="tabs-inner">${items.map(([id, label, link, badge]) => html`<a class="tab${id === active ? ' active' : ''}" href="${href(link)}"${id === active ? raw(' aria-current="page"') : ''}>${label}${badge ? html`<span class="tab-badge">${badge}</span>` : ''}</a>`)}</div></nav>`;
+  return html`<nav class="tabs" aria-label="${t('Sections')}"><div class="tabs-inner">${items.map(([id, label, link, badge]) => html`<a class="tab${id === active ? ' active' : ''}" href="${href(link)}"${id === active ? raw(' aria-current="page"') : ''}>${label}${badge ? html`<span class="tab-badge">${badge}</span>` : ''}</a>`)}</div></nav>`;
 }
 
-export const comingSoon = (label = 'Coming Soon') => html`<span class="soon">${label}</span>`;
+export const comingSoon = (label) => html`<span class="soon">${label || t('Coming Soon')}</span>`;
 export { html, raw, esc };

@@ -1,4 +1,5 @@
 // Shared helpers: ids, clock, errors, formatting, validation.
+import { t, lang, locale } from './i18n.js';
 
 export const uid = () =>
   (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
@@ -29,12 +30,12 @@ export const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86
 export class UserError extends Error {
   constructor(message, field) { super(message); this.name = 'UserError'; this.field = field; this.userFacing = true; }
 }
-export class AuthError extends UserError { constructor(m = 'Please sign in to continue.') { super(m); this.name = 'AuthError'; } }
-export class ForbiddenError extends UserError { constructor(m = "You don't have access to this.") { super(m); this.name = 'ForbiddenError'; } }
-export class NotFoundError extends UserError { constructor(m = "We couldn't find what you were looking for.") { super(m); this.name = 'NotFoundError'; } }
+export class AuthError extends UserError { constructor(m = t('Please sign in to continue.')) { super(m); this.name = 'AuthError'; } }
+export class ForbiddenError extends UserError { constructor(m = t("You don't have access to this.")) { super(m); this.name = 'ForbiddenError'; } }
+export class NotFoundError extends UserError { constructor(m = t("We couldn't find what you were looking for.")) { super(m); this.name = 'NotFoundError'; } }
 export class PlanLimitError extends UserError { constructor(m) { super(m); this.name = 'PlanLimitError'; } }
 
-export function humanError(err, fallback = 'Something went wrong. Please try again.') {
+export function humanError(err, fallback = t('Something went wrong. Please try again.')) {
   if (err && err.userFacing) return err.message;
   console.error(err);
   return fallback;
@@ -44,64 +45,69 @@ export function humanError(err, fallback = 'Something went wrong. Please try aga
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export function req(value, label, field, max = 500) {
   const v = String(value ?? '').trim();
-  if (!v) throw new UserError(`${label} is required.`, field);
-  if (v.length > max) throw new UserError(`${label} is too long (max ${max} characters).`, field);
+  if (!v) throw new UserError(t('{label} is required.', { label: t(label) }), field);
+  if (v.length > max) throw new UserError(t('{label} is too long (max {max} characters).', { label: t(label), max }), field);
   return v;
 }
 export function opt(value, max = 5000) {
   const v = String(value ?? '').trim();
-  if (v.length > max) throw new UserError(`Text is too long (max ${max} characters).`);
+  if (v.length > max) throw new UserError(t('Text is too long (max {max} characters).', { max }));
   return v;
 }
 export function email(value, field = 'email', required = true) {
   const v = String(value ?? '').trim().toLowerCase();
   if (!v && !required) return '';
-  if (!EMAIL_RE.test(v)) throw new UserError('Please enter a valid email address.', field);
+  if (!EMAIL_RE.test(v)) throw new UserError(t('Please enter a valid email address.'), field);
   return v;
 }
 export function money(value, label = 'Amount', field, { allowZero = true } = {}) {
   const n = Number(String(value ?? '').replace(/,/g, ''));
-  if (!Number.isFinite(n) || n < 0 || (!allowZero && n === 0)) throw new UserError(`${label} must be a valid positive number.`, field);
-  if (n > 1e9) throw new UserError(`${label} is too large.`, field);
+  if (!Number.isFinite(n) || n < 0 || (!allowZero && n === 0)) throw new UserError(t('{label} must be a valid positive number.', { label: t(label) }), field);
+  if (n > 1e9) throw new UserError(t('{label} is too large.', { label: t(label) }), field);
   return Math.round(n * 100) / 100;
 }
 export function int(value, label, field, min = 0, max = 1000) {
   const n = Number(value);
-  if (!Number.isInteger(n) || n < min || n > max) throw new UserError(`${label} must be a whole number between ${min} and ${max}.`, field);
+  if (!Number.isInteger(n) || n < min || n > max) throw new UserError(t('{label} must be a whole number between {min} and {max}.', { label: t(label), min, max }), field);
   return n;
 }
 export function dateStr(value, label, field, required = false) {
   const v = String(value ?? '').trim();
-  if (!v) { if (required) throw new UserError(`${label} is required.`, field); return ''; }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || isNaN(new Date(v))) throw new UserError(`${label} must be a valid date.`, field);
+  if (!v) { if (required) throw new UserError(t('{label} is required.', { label: t(label) }), field); return ''; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || isNaN(new Date(v))) throw new UserError(t('{label} must be a valid date.', { label: t(label) }), field);
   return v;
 }
 export const lines = (text) => String(text ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
 
-// Formatting
-export function fmtMoney(amount, currency = 'USD') {
-  const n = Number(amount) || 0;
-  const s = n.toLocaleString('en-US', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
-  return `${s} ${currency}`;
+// Formatting (locale-aware; pass `lng` to force a language, e.g. for documents)
+const AR_CURRENCY = { QAR: 'ر.ق', AED: 'د.إ', SAR: 'ر.س', KWD: 'د.ك', BHD: 'د.ب', OMR: 'ر.ع', EGP: 'ج.م', MAD: 'د.م', USD: 'دولار', EUR: 'يورو', GBP: 'جنيه إسترليني' };
+export const currencyLabel = (currency, lng = lang()) => (lng === 'ar' && AR_CURRENCY[currency]) || currency;
+export function fmtNumber(n, lng = lang()) {
+  n = Number(n) || 0;
+  return n.toLocaleString(locale(lng), { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
 }
-export function fmtDate(d, opts = { month: 'short', day: 'numeric', year: 'numeric' }) {
+export function fmtMoney(amount, currency = 'USD', lng = lang()) {
+  const s = fmtNumber(amount, lng);
+  return currency ? `${s} ${currencyLabel(currency, lng)}` : s;
+}
+export function fmtDate(d, opts = { month: 'short', day: 'numeric', year: 'numeric' }, lng = lang()) {
   if (!d) return '—';
   const date = new Date(d.length === 10 ? d + 'T00:00:00' : d);
   if (isNaN(date)) return '—';
-  return date.toLocaleDateString('en-US', opts);
+  return date.toLocaleDateString(locale(lng), opts);
 }
-export const fmtShortDate = (d) => fmtDate(d, { month: 'short', day: 'numeric' });
-export function fmtDateTime(d) {
+export const fmtShortDate = (d, lng) => fmtDate(d, { month: 'short', day: 'numeric' }, lng);
+export function fmtDateTime(d, lng = lang()) {
   if (!d) return '—';
-  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return new Date(d).toLocaleString(locale(lng), { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 export function fmtRelative(d) {
   if (!d) return '';
   const diff = (clock.now() - new Date(d)) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
+  if (diff < 60) return t('just now');
+  if (diff < 3600) return t('{n}m ago', { n: Math.floor(diff / 60) });
+  if (diff < 86400) return t('{n}h ago', { n: Math.floor(diff / 3600) });
+  if (diff < 86400 * 7) return t('{n}d ago', { n: Math.floor(diff / 86400) });
   return fmtShortDate(d);
 }
 export function fmtBytes(b) {

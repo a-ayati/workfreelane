@@ -5,7 +5,7 @@ import { auth } from './core/auth.js';
 import { clock, addDays } from './core/util.js';
 import { completeOnboarding, createClient, createProject, updateBusiness } from './services/core.js';
 import { saveBrief, sendBrief, createProposal, updateProposal, sendProposal, portalViewProposal, portalRespondProposal, portalAcceptContract, createChangeOrder, portalRespondChangeOrder, portalSubmitBrief } from './services/workflow.js';
-import { recordPayment, createInvoice, sendInvoice } from './services/billing.js';
+import { recordPayment, sendInvoice, invoiceChangeOrder } from './services/billing.js';
 import { uploadFile, sendForReview, portalAddFeedback, portalRequestRevision, requestApproval, portalRespondApproval, markFinal, deliverFinal, completeProject, createReminder } from './services/delivery.js';
 import { savePortfolioItem } from './services/growth.js';
 import { subscription } from './services/context.js';
@@ -22,11 +22,11 @@ function art(title, sub, bg, fg = '#F3EEE5') {
 }
 const tokenOf = (id) => db.get('projects', id).portalToken;
 
-async function proposalFor(project, { items, deliverables, exclusions, timeline, revisions = 2, intro }) {
+async function proposalFor(project, { items, deliverables, exclusions, timeline, revisions = 2, intro, paymentTerms }) {
   const prop = createProposal(project.id);
   updateProposal(prop.id, {
     title: project.name, introduction: intro || db.get('businesses', project.businessId).proposalIntro, objective: db.find('briefs', (b) => b.projectId === project.id)?.objective || '',
-    timeline, revisions, depositPercent: 50, paymentTerms: '50% deposit to start, 50% on final approval before delivery of final files.',
+    timeline, revisions, depositPercent: 50, paymentTerms: paymentTerms || '50% deposit to start, 50% on final approval before delivery of final files.',
     validUntil: iso(14), notes: '', items, deliverables, exclusions: exclusions.join('\n'),
   });
   return prop;
@@ -43,7 +43,7 @@ export async function seedDemo() {
     updateBusiness({ address: 'West Bay, Doha, Qatar', paymentInstructions: 'Bank transfer to Alex Morgan Studio\nIBAN QA00 DEMO 0000 0000 0000 0000 0000 0\nPlease include the invoice number as the reference.' });
     db.update('subscriptions', subscription().id, { plan: 'pro' });
 
-    const abc = createClient({ name: 'ABC Restaurant', company: 'ABC Restaurant Group', email: 'marketing@abc-restaurant.example', phone: '+974 4400 1122', country: 'Qatar', notes: 'Main contact: Omar Haddad (Marketing Manager). Prefers WhatsApp for quick questions, email for approvals.' });
+    const abc = createClient({ name: 'ABC Restaurant', company: 'مجموعة مطاعم ABC', email: 'marketing@abc-restaurant.example', phone: '+974 4400 1122', country: 'قطر', language: 'ar', notes: 'Main contact: Omar Haddad (Marketing Manager). Reads the portal in Arabic. Prefers WhatsApp for quick questions, email for approvals.' });
     const nova = createClient({ name: 'Nova Agency', company: 'Nova Creative Agency', email: 'sara@nova-agency.example', phone: '+971 4 555 0199', country: 'United Arab Emirates', notes: 'Sara Lindqvist, Brand Lead. White-label work for their hospitality clients.' });
     const tech = createClient({ name: 'Vertex Tech', company: 'Vertex Technologies', email: 'daniel.kim@vertex-tech.example', phone: '+974 4000 7788', country: 'Qatar', notes: 'Daniel Kim, Head of Communications. Quarterly content needs.' });
 
@@ -89,26 +89,31 @@ export async function seedDemo() {
     sendForReview(bf.file.id);
     at(1, 16); requestApproval(brand.id, { fileVersionId: bv2.version.id, message: 'Final brand system for approval.' });
 
-    // 3) Restaurant Campaign — revision requested, 50% paid, overdue change-order invoice.
+    // 3) Restaurant Campaign — Arabic-speaking client; revision requested, 50% paid, overdue change-order invoice.
     at(16);
-    const rest = createProject({ name: 'Restaurant Campaign', clientId: abc.id, type: 'Content Creation', deadline: iso(2), revisionsIncluded: 2, depositPercent: 50 });
-    saveBrief(rest.id, { objective: 'Launch the new autumn menu and drive weekend reservations.', audience: 'Local diners and food lovers, 20–45', platforms: 'Instagram, TikTok', tone: 'Premium, warm, modern', references: 'https://instagram.com/ — see saved collection "Autumn"', productionNeeds: 'Location (restaurant), food styling, camera, lighting, editing' });
-    await proposalFor(rest, { timeline: '14 days', items: [{ description: 'Campaign content production', quantity: 1, unitPrice: 7500 }], deliverables: [{ title: 'Reels (30s)', quantity: 3 }, { title: 'Hero video (60s)', quantity: 1 }, { title: 'Edited photos', quantity: 10 }], exclusions: ['Additional shooting', 'Additional revisions', 'Paid advertising', 'Talent', 'Location fees'] });
+    const rest = createProject({ name: 'حملة المطعم', clientId: abc.id, type: 'Content Creation', deadline: iso(2), revisionsIncluded: 2, depositPercent: 50 });
+    saveBrief(rest.id, { objective: 'إطلاق قائمة الخريف الجديدة وزيادة حجوزات نهاية الأسبوع.', audience: 'روّاد المطاعم ومحبو الطعام في الدوحة، 20–45 عامًا', platforms: 'إنستغرام، تيك توك', tone: 'فاخر، دافئ، عصري', references: 'https://instagram.com/ — المجموعة المحفوظة "الخريف"', productionNeeds: 'الموقع (المطعم)، تنسيق الأطباق، الكاميرا، الإضاءة، المونتاج' });
+    await proposalFor(rest, {
+      timeline: '14 يومًا', intro: 'شكرًا لثقتكم. فيما يلي نطاق العمل والجدول الزمني والتكلفة لحملة إطلاق قائمة الخريف.',
+      paymentTerms: '50% دفعة مقدمة لبدء العمل، و50% عند الموافقة النهائية قبل تسليم الملفات النهائية.',
+      items: [{ description: 'إنتاج محتوى الحملة', quantity: 1, unitPrice: 7500 }],
+      deliverables: [{ title: 'ريلز (30 ثانية)', quantity: 3 }, { title: 'فيديو رئيسي (60 ثانية)', quantity: 1 }, { title: 'صور معدّلة', quantity: 10 }],
+      exclusions: ['تصوير إضافي', 'تعديلات إضافية', 'الإعلانات الممولة', 'الممثلون والمواهب', 'رسوم المواقع'],
+    });
     sendProposal(db.find('proposals', (x) => x.projectId === rest.id).id);
-    at(15); portalViewProposal(rest.id, tokenOf(rest.id)); portalRespondProposal(rest.id, tokenOf(rest.id), { decision: 'accept', name: 'Omar Haddad' });
-    at(15, 14); portalAcceptContract(rest.id, tokenOf(rest.id), { name: 'Omar Haddad', agree: true });
+    at(15); portalViewProposal(rest.id, tokenOf(rest.id)); portalRespondProposal(rest.id, tokenOf(rest.id), { decision: 'accept', name: 'عمر حداد' });
+    at(15, 14); portalAcceptContract(rest.id, tokenOf(rest.id), { name: 'عمر حداد', agree: true });
     at(14); recordPayment(db.find('invoices', (i) => i.projectId === rest.id && i.kind === 'deposit').id, { amount: 3750, method: 'Bank transfer', reference: 'ABC-20931', paidAt: at(14) });
-    at(12); const co = createChangeOrder(rest.id, { title: 'Additional Reel (15s teaser)', description: 'A short teaser for the menu launch countdown.', amount: 800, extraDays: 0 });
-    at(12, 15); portalRespondChangeOrder(rest.id, tokenOf(rest.id), co.id, { decision: 'approve', name: 'Omar Haddad' });
-    const coInv = createInvoice(rest.id, { kind: 'change_order', items: [{ description: 'Change order: Additional Reel (15s teaser)', quantity: 1, unitPrice: 800 }], dueDays: 7 });
-    db.update('invoices', coInv.id, { changeOrderId: co.id });
+    at(12); const co = createChangeOrder(rest.id, { title: 'ريل إضافي (تشويقي 15 ثانية)', description: 'مقطع تشويقي قصير للعدّ التنازلي لإطلاق القائمة.', amount: 800, extraDays: 0 });
+    at(12, 15); portalRespondChangeOrder(rest.id, tokenOf(rest.id), co.id, { decision: 'approve', name: 'عمر حداد' });
+    const coInv = invoiceChangeOrder(co.id);
     sendInvoice(coInv.id);
     at(6); const rf = await uploadFile(rest.id, { folder: 'drafts', file: art('Autumn Menu', 'Hero video storyboard · v01', '#3A2A1E') });
     await uploadFile(rest.id, { folder: 'drafts', file: art('Reel 01', 'Truffle risotto · v01', '#2F3B2A') });
     sendForReview(rf.file.id);
-    at(4); portalAddFeedback(rest.id, tokenOf(rest.id), { name: 'Omar Haddad', comment: 'Please replace this shot — the plating looks rushed.', fileVersionId: rf.version.id, pinX: 62, pinY: 40 });
-    portalAddFeedback(rest.id, tokenOf(rest.id), { name: 'Omar Haddad', comment: 'Logo end card should stay on screen longer.', fileVersionId: rf.version.id, reference: 'Frame 12' });
-    at(4, 12); portalRequestRevision(rest.id, tokenOf(rest.id), { name: 'Omar Haddad', summary: 'Replace the risotto plating shot and hold the logo end card for 2 seconds.' });
+    at(4); portalAddFeedback(rest.id, tokenOf(rest.id), { name: 'عمر حداد', comment: 'أرجو استبدال هذه اللقطة — تنسيق الطبق يبدو مستعجلًا.', fileVersionId: rf.version.id, pinX: 62, pinY: 40 });
+    portalAddFeedback(rest.id, tokenOf(rest.id), { name: 'عمر حداد', comment: 'يجب أن تبقى شارة الشعار في النهاية لمدة أطول.', fileVersionId: rf.version.id, reference: 'الإطار 12' });
+    at(4, 12); portalRequestRevision(rest.id, tokenOf(rest.id), { name: 'عمر حداد', summary: 'استبدال لقطة طبق الريزوتو، وإبقاء شارة الشعار في النهاية لمدة ثانيتين.' });
 
     // 4) Social Media Content — proposal sent, no response yet.
     at(5);

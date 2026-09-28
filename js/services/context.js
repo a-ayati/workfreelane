@@ -2,6 +2,7 @@
 import { db } from '../core/store.js';
 import { auth } from '../core/auth.js';
 import { planOf } from '../core/plans.js';
+import { t, tl } from '../core/i18n.js';
 import { ForbiddenError, NotFoundError, UserError, PlanLimitError, nowISO } from '../core/util.js';
 import { ACTIVE_STATUSES } from './constants.js';
 
@@ -10,7 +11,7 @@ export function me() { return auth.requireUser(); }
 export function myBusiness() {
   const u = me();
   const b = db.find('businesses', (x) => x.ownerId === u.id);
-  if (!b) throw new UserError('Finish setting up your business first.');
+  if (!b) throw new UserError(t('Finish setting up your business first.'));
   return b;
 }
 export const maybeBusiness = () => {
@@ -23,13 +24,13 @@ export function subscription(businessId = myBusiness().id) {
 }
 export const plan = () => planOf(subscription());
 export function requireFeature(feature, label) {
-  if (!plan().features[feature]) throw new PlanLimitError(`${label} is available on the Pro plan. You can change your plan in Settings → Subscription.`);
+  if (!plan().features[feature]) throw new PlanLimitError(t('{label} is available on the Pro plan. You can change your plan in Settings → Subscription.', { label: t(label) }));
 }
 export function assertCanActivateProject(businessId) {
   const p = planOf(subscription(businessId));
   const active = db.count('projects', (x) => x.businessId === businessId && ACTIVE_STATUSES.includes(x.status));
   if (active >= p.limits.activeProjects) {
-    throw new PlanLimitError(`The ${p.name} plan includes ${p.limits.activeProjects} active projects. Complete a project or upgrade to Pro in Settings → Subscription.`);
+    throw new PlanLimitError(t('The {plan} plan includes {n} active projects. Complete a project or upgrade to Pro in Settings → Subscription.', { plan: t(p.name), n: p.limits.activeProjects }));
   }
 }
 
@@ -43,15 +44,15 @@ export function canAccessProject(user, project) {
 }
 export function requireProject(id) {
   const p = db.get('projects', id);
-  if (!p) throw new NotFoundError('This project could not be found.');
-  if (!canAccessProject(me(), p)) throw new ForbiddenError("You don't have access to this project.");
+  if (!p) throw new NotFoundError(t('This project could not be found.'));
+  if (!canAccessProject(me(), p)) throw new ForbiddenError(t("You don't have access to this project."));
   return p;
 }
 export function requireOwned(table, id, label = 'item') {
   const r = db.get(table, id);
-  if (!r) throw new NotFoundError(`This ${label} could not be found.`);
+  if (!r) throw new NotFoundError(t('This {label} could not be found.', { label: t(label) }));
   const businessId = r.businessId || (r.projectId && db.get('projects', r.projectId)?.businessId);
-  if (businessId !== myBusiness().id) throw new ForbiddenError(`You don't have access to this ${label}.`);
+  if (businessId !== myBusiness().id) throw new ForbiddenError(t("You don't have access to this {label}.", { label: t(label) }));
   return r;
 }
 
@@ -59,10 +60,16 @@ export function requireOwned(table, id, label = 'item') {
 export function portalProject(projectId, token) {
   const p = db.get('projects', projectId);
   if (!p || !token || !p.portalToken || p.portalToken !== String(token)) {
-    throw new ForbiddenError('This client link is not valid. Please ask your freelancer for a new link.');
+    throw new ForbiddenError(t('This client link is not valid. Please ask your freelancer for a new link.'));
   }
-  if (p.portalDisabled) throw new ForbiddenError('This client portal has been turned off by the freelancer.');
+  if (p.portalDisabled) throw new ForbiddenError(t('This client portal has been turned off by the freelancer.'));
   return p;
+}
+
+// Language the client reads the portal, documents and emails in.
+export function clientLang(projectOrClient) {
+  const c = projectOrClient?.clientId ? db.get('clients', projectOrClient.clientId) : projectOrClient;
+  return c?.language === 'ar' ? 'ar' : 'en';
 }
 
 export function freelancerActor() {
@@ -73,22 +80,35 @@ export function clientActor(project, name) {
   const c = db.get('clients', project.clientId);
   return { type: 'client', name: name || c?.name || 'Client' };
 }
+export const systemActor = () => ({ type: 'system', name: 'Scopewise' });
 
-export function logActivity(project, actor, action, message, meta = {}) {
-  return db.insert('activityLogs', {
-    projectId: project.id, businessId: project.businessId,
-    actorType: actor.type, actorName: actor.name, action, message, meta,
-  });
+// Template variables ending in "_t" are themselves translatable (e.g. folder names).
+export function localVars(vars, lng) {
+  if (!vars) return vars;
+  const out = {};
+  Object.entries(vars).forEach(([k, v]) => { out[k] = k.endsWith('_t') && typeof v === 'string' ? (lng ? tl(lng, v) : t(v)) : v; });
+  return out;
 }
 
-export function notifyOwner(project, { type, title, body = '', link = '', key = null }) {
+// Activity is stored as a template + variables so it reads in any language.
+export function logActivity(project, actor, action, tpl, vars = {}, meta = {}) {
+  return db.insert('activityLogs', {
+    projectId: project.id, businessId: project.businessId,
+    actorType: actor.type, actorName: actor.name, action,
+    message: tl('en', tpl, localVars(vars, 'en')), tpl, vars, meta,
+  });
+}
+export const activityText = (a) => (a.tpl ? t(a.tpl, localVars(a.vars)) : a.message);
+
+export function notifyOwner(project, { type, title, body = '', vars = {}, link = '', key = null }) {
   const b = db.get('businesses', project.businessId || project);
   if (!b) return;
   const settings = b.notificationSettings || {};
   if (settings[type] === false) return;
   if (key && db.find('notifications', (n) => n.key === key)) return;
-  db.insert('notifications', { userId: b.ownerId, businessId: b.id, projectId: project.id || null, type, title, body, link, key, readAt: null });
+  db.insert('notifications', { userId: b.ownerId, businessId: b.id, projectId: project.id || null, type, title, body, vars, link, key, readAt: null });
 }
+export const notificationText = (n) => ({ title: t(n.title, localVars(n.vars)), body: t(n.body || '', localVars(n.vars)) });
 
 export function touchClient(clientId) {
   if (clientId && db.get('clients', clientId)) db.update('clients', clientId, { lastContactAt: nowISO() });

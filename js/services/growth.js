@@ -1,5 +1,6 @@
 // Portfolio, notifications, activity, search and analytics.
 import { db } from '../core/store.js';
+import { t } from '../core/i18n.js';
 import { UserError, req, opt, lines, nowISO, todayISO, addDays, clock, daysBetween, sum, round2 } from '../core/util.js';
 import { me, myBusiness, requireProject, requireOwned, notifyOwner, requireFeature } from './context.js';
 import { financials, invoiceTotals, listDeliverables, isOverdue } from './core.js';
@@ -35,7 +36,7 @@ export function savePortfolioItem(id, data) {
   const b = myBusiness();
   const clean = cleanPortfolio(data);
   const all = [clean.coverVersionId, ...clean.mediaVersionIds].filter(Boolean);
-  all.forEach((vid) => { const v = db.get('fileVersions', vid); if (!v || db.get('projects', v.projectId)?.businessId !== b.id) throw new UserError('One of the selected media files was not found.'); });
+  all.forEach((vid) => { const v = db.get('fileVersions', vid); if (!v || db.get('projects', v.projectId)?.businessId !== b.id) throw new UserError(t('One of the selected media files was not found.')); });
   if (id) { getPortfolioItem(id); return db.update('portfolioItems', id, clean); }
   if (data.projectId) requireProject(data.projectId);
   return db.insert('portfolioItems', { ...clean, businessId: b.id, projectId: data.projectId || null });
@@ -72,8 +73,8 @@ export function sweepReminders() {
   const tomorrow = addDays(clock.now(), 1).toISOString().slice(0, 10);
   const projects = db.all('projects', (p) => p.businessId === b.id);
   projects.forEach((p) => {
-    if (OPEN_STATUSES.includes(p.status) && p.deadline === tomorrow) notifyOwner(p, { type: 'deadline', title: 'Deadline tomorrow', body: `${p.name} is due tomorrow.`, link: `/projects/${p.id}`, key: `deadline:${p.id}:${p.deadline}` });
-    if (isOverdue(p)) notifyOwner(p, { type: 'deadline', title: 'Project past deadline', body: `${p.name} was due ${p.deadline}.`, link: `/projects/${p.id}`, key: `late:${p.id}:${p.deadline}` });
+    if (OPEN_STATUSES.includes(p.status) && p.deadline === tomorrow) notifyOwner(p, { type: 'deadline', title: 'Deadline tomorrow', body: '{project} is due tomorrow.', vars: { project: p.name }, link: `/projects/${p.id}`, key: `deadline:${p.id}:${p.deadline}` });
+    if (isOverdue(p)) notifyOwner(p, { type: 'deadline', title: 'Project past deadline', body: '{project} was due {date}.', vars: { project: p.name, date: p.deadline }, link: `/projects/${p.id}`, key: `late:${p.id}:${p.deadline}` });
     const waiting = [
       ...db.all('proposals', (x) => x.projectId === p.id && ['sent', 'viewed'].includes(x.status)).map((x) => ['proposal', x.sentAt]),
       ...db.all('contracts', (x) => x.projectId === p.id && x.status === 'sent').map((x) => ['contract', x.sentAt]),
@@ -81,19 +82,19 @@ export function sweepReminders() {
     ];
     waiting.forEach(([what, at]) => {
       if (at && daysBetween(at, clock.now()) >= 3) {
-        notifyOwner(p, { type: 'stale', title: 'Client has not responded', body: `No response on the ${what} for ${p.name} for ${daysBetween(at, clock.now())} days. Consider a polite follow-up.`, link: `/projects/${p.id}`, key: `stale:${p.id}:${what}:${at}` });
+        notifyOwner(p, { type: 'stale', title: 'Client has not responded', body: 'No response on the {what_t} for {project} for {n} days. Consider a polite follow-up.', vars: { what_t: what, project: p.name, n: daysBetween(at, clock.now()) }, link: `/projects/${p.id}`, key: `stale:${p.id}:${what}:${at}` });
       }
     });
   });
   db.all('invoices', (i) => i.businessId === b.id).forEach((inv) => {
     if (effectiveStatus(inv) === 'overdue') {
-      notifyOwner(db.get('projects', inv.projectId), { type: 'payment', title: 'Invoice overdue', body: `${inv.number} was due ${inv.dueDate}.`, link: `/invoices/${inv.id}`, key: `overdue:${inv.id}:${inv.dueDate}` });
+      notifyOwner(db.get('projects', inv.projectId), { type: 'payment', title: 'Invoice overdue', body: '{number} was due {date}.', vars: { number: inv.number, date: inv.dueDate }, link: `/invoices/${inv.id}`, key: `overdue:${inv.id}:${inv.dueDate}` });
       if (inv.status !== 'overdue') db.update('invoices', inv.id, { status: 'overdue' });
     }
   });
   db.all('reminders', (r) => r.businessId === b.id && !r.doneAt && r.dueDate <= today).forEach((r) => {
     const c = db.get('clients', r.clientId);
-    notifyOwner({ id: r.projectId, businessId: b.id }, { type: 'followup', title: `Follow up with ${c?.name || 'client'}`, body: r.note, link: `/clients/${r.clientId}`, key: `reminder:${r.id}` });
+    notifyOwner({ id: r.projectId, businessId: b.id }, { type: 'followup', title: 'Follow up with {client}', body: '{note}', vars: { client: c?.name || '', note: r.note }, link: `/clients/${r.clientId}`, key: `reminder:${r.id}` });
   });
 }
 
@@ -109,7 +110,7 @@ export function search(q) {
   db.all('projects', (p) => p.businessId === b.id && hit(p.name, p.type, cName(p.clientId))).forEach((p) => out.push({ kind: 'Project', title: p.name, sub: cName(p.clientId), href: `/projects/${p.id}` }));
   clients.filter((c) => hit(c.name, c.company, c.email)).forEach((c) => out.push({ kind: 'Client', title: c.name, sub: c.company || c.email, href: `/clients/${c.id}` }));
   db.all('proposals', (x) => x.businessId === b.id && hit(x.number, x.title, cName(x.clientId))).forEach((x) => out.push({ kind: 'Proposal', title: `${x.number} · ${x.title}`, sub: cName(x.clientId), href: `/proposals/${x.id}` }));
-  db.all('invoices', (x) => x.businessId === b.id && hit(x.number, `#${x.number}`, cName(x.clientId), db.get('projects', x.projectId)?.name)).forEach((x) => out.push({ kind: 'Invoice', title: `Invoice ${x.number}`, sub: cName(x.clientId), href: `/invoices/${x.id}` }));
+  db.all('invoices', (x) => x.businessId === b.id && hit(x.number, `#${x.number}`, cName(x.clientId), db.get('projects', x.projectId)?.name)).forEach((x) => out.push({ kind: 'Invoice', title: t('Invoice {number}', { number: x.number }), sub: cName(x.clientId), href: `/invoices/${x.id}` }));
   db.all('files', (f) => f.businessId === b.id && hit(f.name)).forEach((f) => out.push({ kind: 'File', title: f.name, sub: db.get('projects', f.projectId)?.name, href: `/projects/${f.projectId}/files` }));
   return out.slice(0, 50);
 }
