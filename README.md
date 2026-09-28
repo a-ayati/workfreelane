@@ -43,6 +43,21 @@ The whole app is bilingual, with full right-to-left layout in Arabic.
 - **Activity and notifications** are stored as templates plus variables, so the same history reads correctly in either language.
 - **Translations:** they live in `js/i18n/ar-*.js`, keyed by the English source string. Run `node tools/i18n-keys.mjs --missing` to list strings that still need a translation.
 
+## Interaction design
+
+The UI follows an iOS-inspired system: calm surfaces, glass only where it adds depth, and motion that explains what changed.
+
+- **Appearance**: Light, Dark or Auto (follows the device), in the sidebar or *Settings → Appearance*. Stored per device (`sw.theme`).
+- **Navigation**: a floating glass sidebar on desktop. On phones, a floating tab bar (Home, Projects, Clients, Inbox, More). The top bar becomes glass once content scrolls under it.
+- **Command center**: press **⌘K** or **Ctrl K**, or tap the search field. It gives live search plus quick actions: New Project, Add Client, New Proposal, New Invoice, Upload File.
+- **Project journey**: a clickable timeline of stages (Brief → Scope → Proposal → Contract → Deposit → Production → Review → Approval → Payment → Delivery), with an animated progress figure and one clear "Your action".
+- **Feedback as conversation**: threads with avatars, timestamps and replies. Resolving a comment resolves its whole thread.
+- **Immersive preview**: zoom, previous/next version (arrows, keyboard ← →, or swipe), with threaded comments beside the file.
+- **Final approval**: the client sees *Final review → Everything looks good? → Request Changes / Approve Final*, then a confirmed *Approved* state with the next step. The freelancer sees *Approved → Deliver Files →*.
+- **Overlays**: modals become bottom sheets on phones. Drag the handle down to dismiss; the close button and Esc also work.
+- **Swipe with buttons**: every swipe gesture (dismissing a notification, changing version, scrolling stages) has a button alternative.
+- **Accessibility**: `prefers-reduced-motion` turns animation off. Status is never shown by colour or motion alone, and focus is kept inside overlays.
+
 ## Architecture
 
 | Layer | Where | Notes |

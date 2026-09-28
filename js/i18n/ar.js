@@ -3,5 +3,6 @@ import A from './ar-1.js';
 import B from './ar-2.js';
 import C from './ar-3.js';
 import D from './ar-4.js';
+import E from './ar-5.js';
 
-export default { ...A, ...B, ...C, ...D };
+export default { ...A, ...B, ...C, ...D, ...E };

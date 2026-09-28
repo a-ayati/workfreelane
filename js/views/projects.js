@@ -1,5 +1,5 @@
 // Projects: list, creation, workspace (overview, brief, proposal, contract, scope, invoices, activity).
-import { html, raw, icon, href, pill, empty, pageHead, field, tabs, onAction, onForm, go, toast, openModal, closeModal, modalHead, confirmDialog, moneyEl, comingSoon } from '../ui.js';
+import { html, raw, icon, href, pill, empty, pageHead, field, tabs, onAction, onForm, go, toast, openModal, closeModal, modalHead, confirmDialog, moneyEl, comingSoon, successCard } from '../ui.js';
 import { db } from '../core/store.js';
 import { t } from '../core/i18n.js';
 import { fmtMoney, fmtDate, fmtShortDate, fmtDateTime, fmtRelative, UserError, lines } from '../core/util.js';
@@ -94,7 +94,7 @@ export function workspace(params) {
   const na = nextAction(p);
   const c = db.get('clients', p.clientId);
   const counts = {
-    feedback: db.count('feedback', (x) => x.projectId === p.id && x.status === 'open' && x.authorType === 'client'),
+    feedback: db.count('feedback', (x) => x.projectId === p.id && x.status === 'open' && x.authorType === 'client' && !x.parentId),
     approvals: db.count('approvals', (x) => x.projectId === p.id && x.status === 'pending'),
     revisions: db.count('revisionRounds', (x) => x.projectId === p.id && x.status !== 'delivered'),
   };
@@ -120,23 +120,64 @@ export function workspace(params) {
       </div>
     </div>
     <div class="next-card${na.waiting ? ' waiting' : ''}">
-      <div><div class="label">${na.waiting ? t('Status') : t('Next step')}</div><div class="title">${na.label}</div><div class="detail">${na.detail || ''}</div></div>
+      <div><div class="label">${na.waiting ? t('Status') : t('Your action')}</div><div class="title">${na.label}</div><div class="detail">${na.detail || ''}</div></div>
       ${na.href && !na.waiting ? html`<a class="btn btn-primary" href="${href(na.href)}">${na.label} ${icon('arrow', 16)}</a>` : na.href ? html`<a class="btn btn-secondary" href="${href(na.href)}">${t('View')}</a>` : ''}
     </div>
+    ${journey(p, tab)}
     ${tabs(TABS.map((x) => [x, t(TAB_LABELS[x]), `/projects/${p.id}/${x}`, counts[x] || '']), tab)}
     ${body}`;
 }
 
+// Interactive project timeline: every stage opens its content; the current
+// stage pulses. Stages scroll horizontally (swipe on touch) with buttons too.
+function journeyStages(p) {
+  const brief = getBrief(p.id);
+  const prop = latestProposal(p.id);
+  const contract = projectContract(p.id);
+  const f = financials(p);
+  const approvals = db.all('approvals', (a) => a.projectId === p.id);
+  const shared = db.find('files', (x) => x.projectId === p.id && x.sharedAt && x.folder !== 'brand' && x.folder !== 'brief');
+  const approved = approvals.some((a) => a.status === 'approved');
+  const past = (s) => ['active', 'in_review', 'revision_requested', 'awaiting_approval', 'approved', 'completed'].includes(s);
+  const base = `/projects/${p.id}/`;
+  return [
+    ['Brief', base + 'brief', !!(brief?.objective || prop)],
+    ['Scope', base + 'scope', listDeliverables(p.id).length > 0 && !!prop],
+    ['Proposal', base + 'proposal', prop?.status === 'accepted'],
+    ['Contract', base + 'contract', contract?.status === 'accepted'],
+    ['Deposit', base + 'invoices', f.depositPaid || (contract?.status === 'accepted' && !p.depositPercent) || (past(p.status) && f.depositAmount <= 0)],
+    ['Production', base + 'files', !!shared || ['in_review', 'revision_requested', 'awaiting_approval', 'approved', 'completed'].includes(p.status)],
+    ['Review', base + 'feedback', approvals.length > 0 || ['approved', 'completed'].includes(p.status)],
+    ['Approval', base + 'approvals', approved || ['approved', 'completed'].includes(p.status)],
+    ['Payment', base + 'invoices', f.contracted && f.balance <= 0.001],
+    ['Delivery', base + 'files?folder=deliverables', !!p.deliveredAt],
+  ];
+}
+function journey(p) {
+  if (p.status === 'cancelled') return '';
+  const stages = journeyStages(p);
+  const current = p.status === 'completed' ? -1 : stages.findIndex(([, , done]) => !done);
+  const pct = progress(p);
+  return html`<section class="journey" aria-label="${t('Workflow')}">
+    <div class="journey-top">
+      <div><div class="eyebrow" style="margin:0 0 4px">${t('Progress')}</div><div class="journey-pct"><span data-count="${pct}" data-key="journey-${p.id}">${pct}</span><small>%</small></div></div>
+      <div class="stage-nav no-print"><button class="icon-btn" data-action="stages-scroll" data-dir="-1" aria-label="${t('Previous stages')}">${icon('back', 16)}</button><button class="icon-btn" data-action="stages-scroll" data-dir="1" aria-label="${t('Next stages')}">${icon('arrow', 16)}</button></div>
+    </div>
+    <div class="journey-track" aria-hidden="true"><span data-width="${pct}" data-key="jt-${p.id}" style="width:${pct}%"></span></div>
+    <ol class="stages" role="list">
+      ${stages.map(([label, link, done], i) => html`<li style="list-style:none;display:contents"><a class="stage-chip${done ? ' done' : ''}${i === current ? ' current' : ''}" href="${href(link)}"${i === current ? raw(' aria-current="step" data-current') : ''}><span class="mark" aria-hidden="true">${done ? '✓' : i === current ? '' : ''}</span>${t(label)}<span class="sr-only">${done ? t('(done)') : i === current ? t('(current)') : ''}</span></a></li>`)}
+    </ol>
+  </section>`;
+}
+
 function overview(p) {
   const f = financials(p);
-  const idx = flowIndex(p);
   const del = listDeliverables(p.id);
   const acts = projectActivity(p.id).slice(0, 6);
   const c = db.get('clients', p.clientId);
   const reminders = listReminders().filter((r) => r.projectId === p.id);
   return html`<div class="grid-main">
     <div class="stack">
-      <ol class="flow" aria-label="${t('Workflow')}">${FLOW.map((l, i) => html`<li class="${i < idx ? 'done' : i === idx ? 'current' : ''}"${i === idx ? raw(' aria-current="step"') : ''}>${t(l)}</li>`)}</ol>
       <div class="pay-grid">
         <div><span>${t('Project total')}</span><b>${fmtMoney(f.total, p.currency)}</b></div>
         <div><span>${t('Deposit ({n}%)', { n: p.depositPercent })}</span><b>${fmtMoney(f.depositAmount, p.currency)}</b><div class="small ${f.depositPaid ? '' : 'muted'}">${f.depositAmount <= 0 ? t('No deposit') : f.depositPaid ? t('✓ Deposit received') : f.contracted ? t('Pending deposit') : t('Due after contract')}</div></div>
@@ -411,6 +452,11 @@ onAction({
     regenerateContract(el.dataset.id); toast(t('New contract issued.'));
   },
   print: () => { window.print(); return false; },
+  'stages-scroll': (el) => {
+    const s = el.closest('.journey')?.querySelector('.stages');
+    if (s) s.scrollBy({ left: Number(el.dataset.dir) * s.clientWidth * 0.7 * (document.documentElement.dir === 'rtl' ? -1 : 1), behavior: 'smooth' });
+    return false;
+  },
   'scope-add-row': () => {
     const rows = document.getElementById('scope-rows');
     const i = rows.querySelectorAll('.row-edit:not(.row-head)').length + Date.now() % 1000;
@@ -432,7 +478,7 @@ onForm({
   'project-create': (v) => {
     const p = createProject(v);
     newState = { mode: null, template: null };
-    toast(t('Project created. Next: complete the brief.'));
+    successCard({ title: t('Project created'), next: t('Complete the brief, then send it to the client.') });
     go(`/projects/${p.id}/brief`); return false;
   },
   'project-update': (v) => { updateProject(v.id, v); closeModal(); toast(t('Project updated.')); },

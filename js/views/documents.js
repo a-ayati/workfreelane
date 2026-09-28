@@ -1,7 +1,7 @@
 // Proposals, contracts, invoices, payments: lists, editors and printable documents
 // (the document renderers are shared with the client portal). Documents are
 // always written in the client's language, whoever is looking at them.
-import { html, raw, icon, href, pill, empty, pageHead, field, onAction, onForm, go, toast, openModal, closeModal, modalHead, confirmDialog, comingSoon } from '../ui.js';
+import { html, raw, icon, href, pill, empty, pageHead, field, onAction, onForm, go, toast, openModal, closeModal, modalHead, confirmDialog, comingSoon, successCard } from '../ui.js';
 import { db } from '../core/store.js';
 import { t, tl, LANGS } from '../core/i18n.js';
 import { fmtMoney, fmtDate, fmtShortDate, fmtDateTime, todayISO } from '../core/util.js';
@@ -268,13 +268,17 @@ onForm({
     updateProposal(v.id, v);
     if (submitter?.value === 'send') {
       sendProposal(v.id);
-      toast(t('Proposal sent. You will be notified when the client responds.'));
+      successCard({ title: t('Proposal sent'), next: t('You will be notified when the client responds.') });
     } else toast(t('Draft saved.'));
   },
   'invoice-save': (v, form, submitter) => {
     updateInvoice(v.id, v);
     if (submitter?.value === 'send') { sendInvoice(v.id); toast(t('Invoice sent.')); } else toast(t('Draft saved.'));
   },
-  'payment-create': (v) => { recordPayment(v.id, v); closeModal(); toast(t('Payment recorded.')); },
+  'payment-create': (v) => {
+    recordPayment(v.id, v); closeModal();
+    const inv = getInvoice(v.id); const bal = invoiceTotals(v.id).balance;
+    successCard({ title: t('Payment recorded.'), next: bal > 0.001 ? t('Balance remaining: {amount}', { amount: fmtMoney(bal, inv.currency) }) : t('Invoice paid in full.') });
+  },
 });
 export { go };

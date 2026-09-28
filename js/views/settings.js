@@ -1,4 +1,5 @@
 // Settings.
+import { themeSwitch } from './shell.js';
 import { html, raw, icon, href, pageHead, field, onAction, onForm, go, toast, confirmDialog, tabs, comingSoon, parseHash } from '../ui.js';
 import { db, resetAll, flush } from '../core/store.js';
 import { auth } from '../core/auth.js';
@@ -11,7 +12,7 @@ import { updateBusiness, myProfile, updateProfile, contractTemplateFor } from '.
 import { CURRENCIES, DISCIPLINES, NOTIFICATION_TYPES, TEMPLATES, DEFAULT_CONTRACT_SECTIONS, DEFAULT_CONTRACT_SECTIONS_AR, CONTRACT_DISCLAIMER } from '../services/constants.js';
 import { resizeImage } from './onboarding.js';
 
-const SECTIONS = [['profile', 'Profile'], ['language', 'Language'], ['business', 'Business'], ['brand', 'Brand'], ['currency', 'Currency'], ['notifications', 'Notifications'], ['templates', 'Templates'], ['invoices', 'Invoice Settings'], ['proposals', 'Proposal Settings'], ['contracts', 'Contract Templates'], ['ai', 'AI'], ['security', 'Security'], ['subscription', 'Subscription']];
+const SECTIONS = [['profile', 'Profile'], ['language', 'Language'], ['appearance', 'Appearance'], ['business', 'Business'], ['brand', 'Brand'], ['currency', 'Currency'], ['notifications', 'Notifications'], ['templates', 'Templates'], ['invoices', 'Invoice Settings'], ['proposals', 'Proposal Settings'], ['contracts', 'Contract Templates'], ['ai', 'AI'], ['security', 'Security'], ['subscription', 'Subscription']];
 
 export function settingsView(params) {
   const section = SECTIONS.some(([id]) => id === params.section) ? params.section : 'profile';
@@ -32,6 +33,9 @@ export function settingsView(params) {
       ${field({ label: t('App language'), name: 'lang', type: 'select', value: lang(), options: [['en', 'English'], ['ar', 'العربية']], hint: t('The language of your workspace.') })}
       <div class="notice small">${t('Each client has their own language, set on the client profile. Their portal, proposals, contracts, invoices and emails use it — so you can work in one language while a client reads another.')}</div>
       <div class="form-actions"><button class="btn btn-primary" type="submit">${t('Save')}</button></div></form>`,
+    appearance: () => html`<div class="card form-stack">
+      <div><h2>${t('Appearance')}</h2><p class="small muted" style="margin:4px 0 0">${t('Auto follows your device setting. Saved on this device.')}</p></div>
+      ${themeSwitch()}</div>`,
     business: () => html`<form class="card form-grid" data-form="settings-business">
       ${field({ label: t('Business name'), name: 'name', value: b.name, required: true, full: true })}
       ${field({ label: t('Address (shown on invoices)'), name: 'address', type: 'textarea', rows: 3, value: b.address, full: true })}${save}</form>`,

@@ -3,7 +3,8 @@ import { initStore, onRemoteChange } from './core/store.js';
 import { auth } from './core/auth.js';
 import { humanError } from './core/util.js';
 import { t, setActiveLang, uiLang } from './core/i18n.js';
-import { html, route, match, parseHash, setRenderer, installDelegation, rerender, go, href, isDirty, toast, empty, closeModal } from './ui.js';
+import { html, route, match, parseHash, setRenderer, installDelegation, rerender, go, href, isDirty, toast, empty, closeModal, animateCounts } from './ui.js';
+import './views/command.js';
 import { maybeBusiness } from './services/context.js';
 import { appShell } from './views/shell.js';
 import * as pub from './views/public.js';
@@ -54,7 +55,7 @@ const root = document.getElementById('app');
 let lastPath = null;
 
 function errorPage(err, inApp) {
-  const body = empty({ title: err?.name === 'ForbiddenError' ? t('No access') : err?.name === 'NotFoundError' ? t('Not found') : t('Something went wrong'), body: humanError(err, t('Something went wrong while loading this page. Please try again.')), cta: html`<a class="btn btn-primary" href="${href(inApp ? '/dashboard' : '/')}">${inApp ? t('Go to dashboard') : t('Go home')}</a>` });
+  const body = empty({ title: err?.name === 'ForbiddenError' ? t('No access') : err?.name === 'NotFoundError' ? t('Not found') : t('Something went wrong'), body: humanError(err, t('Something went wrong while loading this page. Please try again.')), cta: html`<div class="btn-row" style="justify-content:center"><button class="btn btn-primary" data-action="retry">${t('Try Again')}</button><a class="btn btn-secondary" href="${href(inApp ? '/dashboard' : '/')}">${inApp ? t('Go to dashboard') : t('Go home')}</a></div>` });
   return inApp ? body : html`<main style="max-width:560px;margin:10vh auto;padding:0 16px">${body}</main>`;
 }
 
@@ -84,7 +85,9 @@ function render() {
   root.innerHTML = String(out);
   const skip = document.querySelector('.skip-link'); if (skip) skip.textContent = t('Skip to content');
   hydrateBlobs(root);
+  animateCounts(root);
   if (path !== lastPath) {
+    document.getElementById('main')?.classList.add('enter');
     window.scrollTo(0, 0);
     document.getElementById('main')?.focus({ preventScroll: true });
     lastPath = path;

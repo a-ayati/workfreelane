@@ -38,15 +38,17 @@ try {
   await app.waitForFunction(() => location.hash === '#/onboarding', null, { timeout: 15000 }); await app.waitForTimeout(200);
   check('freelancer can register', true);
 
-  // Onboarding (6 steps)
-  await app.click('.chip:has-text("Video Editor")'); await app.click('.chip:has-text("Photographer")');
+  // Onboarding (7 steps, one decision per screen)
+  await app.click('.tile:has-text("Video Editor")'); await app.click('.tile:has-text("Photographer")');
+  await app.click('button:has-text("Continue")');
+  await app.waitForSelector('text=What do you want to manage?');
   await app.click('button:has-text("Continue")');
   await app.fill('textarea[name=services]', 'Video editing\nProduct photography');
   await app.click('button:has-text("Continue")');
-  await app.click('.chip:has-text("QAR")'); await app.click('button:has-text("Continue")');
+  await app.click('.tile:has-text("QAR")'); await app.click('button:has-text("Continue")');
   await app.fill('input[name=businessName]', 'Lina Visuals'); await app.click('button:has-text("Continue")');
   await app.click('button:has-text("Finish setup")');
-  await app.waitForSelector('text=You\'re set up.');
+  await app.waitForSelector('text=Let\'s create your first project.');
   check('onboarding completes', true);
   await app.click('a:has-text("Skip for now")');
   await app.waitForSelector('.metrics');
@@ -171,7 +173,12 @@ try {
   await client.fill('.modal textarea[name=comment]', 'Please replace this shot.');
   await client.click('.modal button:has-text("Add comment")');
   await client.waitForTimeout(300);
-  check('feedback can be created (pinned)', (await client.locator('.modal .comment:has-text("Please replace this shot.")').count()) === 1);
+  check('feedback can be created (pinned)', (await client.locator('.modal .thread:has-text("Please replace this shot.")').count()) === 1);
+  await client.click('.modal .thread summary:has-text("Reply")');
+  await client.fill('.modal .reply-form input[name=comment]', 'Also warmer colours, please.');
+  await client.click('.modal .reply-form button[type=submit]');
+  await client.waitForTimeout(300);
+  check('feedback thread accepts replies', (await client.locator('.modal .bubble-row.reply:has-text("warmer colours")').count()) === 1);
   await client.click('.modal [data-action=modal-close] >> nth=0');
   await client.goto(`${BASE}#/client/${projectId}/revisions?t=${token}`);
   await client.fill('textarea[name=summary]', 'Replace the plating shot and extend the end card.');
@@ -197,13 +204,15 @@ try {
   // 9. Client approves
   await client.bringToFront();
   await client.goto(`${BASE}#/client/${projectId}/approval?t=${token}`);
-  await client.waitForSelector('text=Final Approval Required');
+  await client.waitForSelector('.final-review:has-text("Everything looks good?")');
   await shot(client, '04-portal-approval-mobile');
   await client.fill('input[name=name]', 'Omar Haddad');
-  await client.click('button:has-text("Approve") >> nth=0');
-  await client.click('.modal button:has-text("Approve")');
+  await client.click('.final-review button:has-text("Approve Final")');
+  await client.click('.modal button:has-text("Approve Final")');
   await client.waitForTimeout(400);
-  check('final work can be approved', (await client.locator('text=✓ Approved').count()) > 0);
+  await client.waitForSelector('.approved-state');
+  await shot(client, '05-portal-approved-mobile');
+  check('final work can be approved', (await client.locator('.approved-state:has-text("Final version confirmed.")').count()) > 0);
 
   // Freelancer: approval record, deliver, final invoice
   await app.bringToFront();

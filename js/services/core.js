@@ -9,14 +9,15 @@ import { CURRENCIES, TEMPLATES, PROJECT_TYPES, DEFAULT_CONTRACT_SECTIONS, DEFAUL
 const sections = (rows) => rows.map(([title, body]) => ({ title, body }));
 
 // ---------- Business & onboarding ----------
-export function completeOnboarding({ disciplines, services, currency, businessName, logo }) {
+export const MANAGE_OPTIONS = ['Projects', 'Clients', 'Proposals', 'Contracts', 'Invoices', 'Files'];
+export function completeOnboarding({ disciplines, manage, services, currency, businessName, logo }) {
   const u = me();
   if (db.find('businesses', (b) => b.ownerId === u.id)) throw new UserError(t('Your business is already set up.'));
   const d = (disciplines || []).filter(Boolean).slice(0, 12);
   if (!d.length) throw new UserError(t('Choose at least one type of work you do.'), 'disciplines');
   if (!CURRENCIES.includes(currency)) throw new UserError(t('Choose a currency.'), 'currency');
   const name = req(businessName, 'Business name', 'businessName', 120);
-  db.insert('profiles', { userId: u.id, disciplines: d, services: lines(services).slice(0, 30), title: t(d[0]), bio: '', phone: '' });
+  db.insert('profiles', { userId: u.id, disciplines: d, manage: (manage || []).filter((m) => MANAGE_OPTIONS.includes(m)), services: lines(services).slice(0, 30), title: t(d[0]), bio: '', phone: '' });
   const b = db.insert('businesses', {
     ownerId: u.id, name, currency, logo: logo || '', brandColor: '#17150F', address: '', taxRate: 0, taxLabel: t('VAT'),
     invoicePrefix: 'INV-', nextInvoiceNumber: 1001, proposalPrefix: 'P-', nextProposalNumber: 101,

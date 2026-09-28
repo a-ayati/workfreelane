@@ -115,6 +115,15 @@ async function runSafely(fn, { form, button } = {}) {
   }
 }
 
+// Run a registered action programmatically (e.g. from the command center).
+export function runAction(name, dataset = {}) {
+  const fn = actions[name];
+  if (!fn) return;
+  const el = document.createElement('button');
+  Object.entries(dataset).forEach(([k, v]) => { el.dataset[k] = v; });
+  runSafely(() => fn(el, new Event('click')));
+}
+
 let dirty = false;
 export const isDirty = () => dirty;
 export const clearDirty = () => { dirty = false; };
@@ -149,7 +158,7 @@ export function installDelegation() {
   });
 }
 
-// ---------------- Toasts ----------------
+// ---------------- Toasts & success cards ----------------
 export function toast(message, tone = 'ok') {
   const root = document.getElementById('toast-root');
   const el = document.createElement('div');
@@ -161,27 +170,80 @@ export function toast(message, tone = 'ok') {
   setTimeout(() => el.remove(), tone === 'error' ? 5600 : 3600);
 }
 
-// ---------------- Modals ----------------
+export const checkBadge = (size) => raw(`<span class="check-badge"${size ? ` style="width:${size}px;height:${size}px"` : ''} aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>`);
+
+// A calm, non-blocking success moment with the next step.
+export function successCard({ title, next, href: link, label }) {
+  const root = document.getElementById('toast-root');
+  root.querySelectorAll('.success-card').forEach((x) => x.remove());
+  const el = document.createElement('div');
+  el.className = 'success-card';
+  el.setAttribute('role', 'status');
+  el.innerHTML = String(html`${checkBadge()}<div><b>${title}</b>${next ? html`<span class="next">${t('Next')}: ${next}</span>` : ''}</div>${link ? html`<a class="btn btn-primary btn-sm" href="${href(link)}">${label || t('Continue')} ${icon('arrow', 14)}</a>` : ''}`);
+  root.appendChild(el);
+  el.querySelector('a')?.addEventListener('click', () => el.remove());
+  setTimeout(() => el.classList.add('out'), 6000);
+  setTimeout(() => el.remove(), 6400);
+}
+
+// ---------------- Modals & bottom sheets ----------------
 let lastFocus = null;
 let modalRenderer = null;
+let closeTimer = null;
 export function openModal(renderer, { size = '' } = {}) {
+  clearTimeout(closeTimer);
   lastFocus = document.activeElement;
   modalRenderer = typeof renderer === 'function' ? renderer : () => renderer;
   const root = document.getElementById('modal-root');
-  root.innerHTML = `<div class="modal-backdrop" data-action="modal-close"></div><div class="modal ${size}" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-body">${modalRenderer()}</div></div>`;
+  root.classList.remove('closing');
+  root.innerHTML = `<div class="modal-backdrop" data-action="modal-close"></div><div class="modal ${size}" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="sheet-grip"><div class="sheet-handle" aria-hidden="true"></div></div><div class="modal-body">${modalRenderer()}</div></div>`;
   document.body.classList.add('has-modal');
+  installSheetDrag(root.querySelector('.modal'));
   const first = root.querySelector('[autofocus], input:not([type=hidden]), textarea, select, button:not(.modal-x)');
-  (first || root.querySelector('.modal')).focus?.();
+  // Avoid popping the keyboard on phones when a sheet opens.
+  if (!matchMedia('(max-width: 900px)').matches) (first || root.querySelector('.modal')).focus?.();
+  else root.querySelector('.modal').setAttribute('tabindex', '-1'), root.querySelector('.modal').focus({ preventScroll: true });
 }
 export function refreshModal() {
   const body = document.querySelector('#modal-root .modal-body');
   if (body && modalRenderer) body.innerHTML = String(modalRenderer());
 }
 export function closeModal() {
-  document.getElementById('modal-root').innerHTML = '';
-  document.body.classList.remove('has-modal');
+  const root = document.getElementById('modal-root');
+  if (!root.firstChild) return;
   modalRenderer = null;
-  lastFocus?.focus?.();
+  document.body.classList.remove('has-modal');
+  root.classList.add('closing');
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(() => { root.innerHTML = ''; root.classList.remove('closing'); }, 170);
+  lastFocus?.focus?.({ preventScroll: true });
+}
+// Drag the sheet down to dismiss (the close button and Escape remain).
+function installSheetDrag(modal) {
+  const grip = modal?.querySelector('.sheet-grip');
+  if (!grip) return;
+  let startY = 0, dy = 0, t0 = 0, active = false;
+  grip.addEventListener('pointerdown', (e) => {
+    if (!matchMedia('(max-width: 900px)').matches) return;
+    active = true; startY = e.clientY; dy = 0; t0 = performance.now();
+    grip.setPointerCapture(e.pointerId);
+    modal.classList.add('dragging'); modal.classList.remove('settle');
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    dy = Math.max(0, e.clientY - startY);
+    modal.style.transform = `translateY(${dy}px)`;
+  });
+  const end = () => {
+    if (!active) return;
+    active = false;
+    modal.classList.remove('dragging');
+    const velocity = dy / Math.max(1, performance.now() - t0);
+    if (dy > 120 || velocity > 0.6) { modal.style.transform = ''; closeModal(); return; }
+    modal.classList.add('settle'); modal.style.transform = '';
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
 }
 function trapFocus(ev) {
   const modal = document.querySelector('#modal-root .modal');
@@ -192,7 +254,8 @@ function trapFocus(ev) {
   if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
   else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
 }
-onAction({ 'modal-close': () => { closeModal(); return false; } });
+// "Try again" on error states simply re-renders the current route.
+onAction({ 'modal-close': () => { closeModal(); return false; }, retry: () => {} });
 
 export const modalHead = (title, sub) => html`<div class="modal-head"><div><h2 id="modal-title">${title}</h2>${sub ? html`<p class="muted">${sub}</p>` : ''}</div><button class="icon-btn modal-x" data-action="modal-close" aria-label="${t('Close')}">${icon('x')}</button></div>`;
 
@@ -239,8 +302,9 @@ export function empty({ title, body, cta }) {
   return html`<div class="empty"><div class="empty-mark" aria-hidden="true"></div><h3>${title}</h3><p>${body}</p>${cta || ''}</div>`;
 }
 
-export function progressBar(value, label) {
-  return html`<div class="progress" role="progressbar" aria-valuenow="${value}" aria-valuemin="0" aria-valuemax="100" aria-label="${label || t('Progress')}"><span style="width:${Math.max(0, Math.min(100, value))}%"></span></div>`;
+export function progressBar(value, label, key = '') {
+  const v = Math.max(0, Math.min(100, value));
+  return html`<div class="progress" role="progressbar" aria-valuenow="${v}" aria-valuemin="0" aria-valuemax="100" aria-label="${label || t('Progress')}"><span style="width:${v}%" data-width="${v}" data-key="${key}"></span></div>`;
 }
 
 export function field({ label, name, value = '', type = 'text', required, placeholder, hint, rows, options, attrs = '', full }) {
@@ -258,3 +322,44 @@ export function tabs(items, active) {
 
 export const comingSoon = (label) => html`<span class="soon">${label || t('Coming Soon')}</span>`;
 export { html, raw, esc };
+
+// ---------------- Motion helpers ----------------
+export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Numbers marked data-count animate from their previous value (keyed by data-key).
+const lastCounts = new Map();
+export function animateCounts(root = document) {
+  root.querySelectorAll('[data-count]').forEach((el) => {
+    const to = Number(el.dataset.count) || 0;
+    const key = el.dataset.key || '';
+    const from = key && lastCounts.has(key) ? lastCounts.get(key) : Math.max(0, to - Math.min(to, 12));
+    if (key) lastCounts.set(key, to);
+    if (from === to || reducedMotion()) { el.textContent = String(to); return; }
+    const start = performance.now(), dur = 420;
+    const step = (now) => {
+      const k = Math.min(1, (now - start) / dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = String(Math.round(from + (to - from) * e));
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+  // Progress bars grow from their previous width.
+  root.querySelectorAll('[data-width]').forEach((el) => {
+    const key = el.dataset.key || '';
+    const to = Number(el.dataset.width) || 0;
+    const from = key && lastCounts.has('w:' + key) ? lastCounts.get('w:' + key) : 0;
+    if (key) lastCounts.set('w:' + key, to);
+    if (from === to || reducedMotion()) return;
+    el.style.width = `${from}%`;
+    requestAnimationFrame(() => requestAnimationFrame(() => { el.style.width = `${to}%`; }));
+  });
+}
+
+// ---------------- Appearance ----------------
+const THEME_KEY = 'sw.theme';
+export function getTheme() { try { return localStorage.getItem(THEME_KEY) || 'system'; } catch { return 'system'; } }
+export function setTheme(v) {
+  const theme = ['light', 'dark'].includes(v) ? v : 'system';
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
+  if (theme === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = theme;
+}

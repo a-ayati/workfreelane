@@ -1,5 +1,5 @@
 // Project workspace: files, feedback, revisions, approvals.
-import { html, raw, icon, href, pill, empty, field, onAction, onForm, go, toast, openModal, closeModal, modalHead, confirmDialog, parseHash } from '../ui.js';
+import { html, raw, icon, href, pill, empty, field, onAction, onForm, go, toast, openModal, closeModal, modalHead, confirmDialog, parseHash, checkBadge, successCard } from '../ui.js';
 import { db } from '../core/store.js';
 import { t } from '../core/i18n.js';
 import { fmtDateTime, fmtShortDate, fmtRelative, fmtBytes, fmtTimecode, UserError } from '../core/util.js';
@@ -7,7 +7,7 @@ import { runAI } from '../core/ai.js';
 import { getProject, financials } from '../services/core.js';
 import { listFiles, uploadFile, renameFile, moveFile, deleteFile, markFinal, sendForReview, listFeedback, setFeedbackStatus, addFeedback, listRounds, startRound, logRevisionRequest, listApprovals, requestApproval, withdrawApproval, deliverFinal, latestVersion, deliveryLocked } from '../services/delivery.js';
 import { FOLDERS, ROUND_STATUSES } from '../services/constants.js';
-import { thumb, openViewer, download, verLabel } from './viewer.js';
+import { thumb, openViewer, download, verLabel, conversation } from './viewer.js';
 
 export const APPROVAL_STATUSES = { pending: { label: 'Awaiting client', tone: 'amber' }, approved: { label: 'Approved', tone: 'green' }, changes_requested: { label: 'Changes requested', tone: 'red' }, withdrawn: { label: 'Withdrawn', tone: 'neutral' } };
 export const folderName = (id) => t(FOLDERS.find((f) => f.id === id)?.label || id);
@@ -30,7 +30,7 @@ export function filesTab(p) {
     </nav>
     <form class="card" data-form="files-upload" style="margin-bottom:16px">
       <input type="hidden" name="id" value="${p.id}">
-      <div class="form-grid" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto;align-items:end">
+      <div class="form-grid upload-grid">
         <label class="field"><span>${t('Upload files')}</span><input type="file" name="files" multiple></label>
         ${field({ label: t('Folder'), name: 'folder', type: 'select', value: folder || (['active', 'in_review', 'revision_requested'].includes(p.status) ? 'drafts' : p.status === 'approved' ? 'deliverables' : 'brief'), options: folderOptions() })}
         <button class="btn btn-primary" type="submit">${icon('upload', 16)} ${t('Upload')}</button>
@@ -45,7 +45,7 @@ export function filesTab(p) {
 function fileRow(p, f) {
   const v = f.latest;
   const inClientView = ['review', 'final', 'deliverables', 'brand', 'brief'].includes(f.folder) && (f.folder !== 'review' || f.sharedAt);
-  const fb = db.count('feedback', (x) => x.fileId === f.id && x.status === 'open');
+  const fb = db.count('feedback', (x) => x.fileId === f.id && x.status === 'open' && !x.parentId);
   const meta = [folderName(f.folder), v ? `${fmtBytes(v.size)} · ${fmtRelative(v.createdAt)}` : '', f.uploadedBy === 'client' ? t('from client') : '', inClientView ? t('visible to client') : '', fb ? t(fb === 1 ? '1 open comment' : '{n} open comments', { n: fb }) : ''].filter(Boolean).join(' · ');
   return html`<div class="file-row">
     ${v ? thumb(v) : html`<div class="file-thumb">—</div>`}
@@ -101,21 +101,21 @@ async function uploadWithProgress(form, projectId, fileList, opts) {
 // ---------------- Feedback ----------------
 export function feedbackTab(p) {
   const q = parseHash().query;
-  const show = q.show || 'open';
+  const show = ['open', 'resolved', 'all'].includes(q.show) ? q.show : 'open';
   const all = listFeedback(p.id);
-  const items = all.filter((f) => show === 'all' || f.status === show);
+  const roots = all.filter((f) => !f.parentId);
+  const shown = roots.filter((f) => show === 'all' || f.status === show);
   const byVersion = new Map();
-  items.forEach((f) => { const k = f.fileVersionId || 'general'; if (!byVersion.has(k)) byVersion.set(k, []); byVersion.get(k).push(f); });
+  shown.forEach((f) => { const k = f.fileVersionId || 'general'; if (!byVersion.has(k)) byVersion.set(k, []); byVersion.get(k).push(f); });
+  const withReplies = (list) => all.filter((x) => list.includes(x) || list.some((r) => r.id === x.parentId));
   return html`<div class="btn-row" style="justify-content:space-between;margin-bottom:16px">
-      <nav class="filters" style="margin:0">${[['open', 'Open'], ['resolved', 'Resolved'], ['all', 'All']].map(([id, l]) => html`<a href="${href(`/projects/${p.id}/feedback?show=${id}`)}" class="${show === id ? 'active' : ''}">${t(l)} (${id === 'all' ? all.length : all.filter((x) => x.status === id).length})</a>`)}</nav>
+      <nav class="filters" style="margin:0">${[['open', 'Open'], ['resolved', 'Resolved'], ['all', 'All']].map(([id, l]) => html`<a href="${href(`/projects/${p.id}/feedback?show=${id}`)}" class="${show === id ? 'active' : ''}"${show === id ? raw(' aria-current="true"') : ''}>${t(l)} (${id === 'all' ? roots.length : roots.filter((x) => x.status === id).length})</a>`)}</nav>
       <span class="btn-row"><button class="btn btn-secondary btn-sm" data-action="feedback-summary" data-id="${p.id}">${icon('sparkles', 14)} ${t('Summarize')}</button><button class="btn btn-secondary btn-sm" data-action="feedback-note" data-id="${p.id}">${icon('plus', 14)} ${t('Add note')}</button></span></div>
-    ${items.length ? [...byVersion.entries()].map(([vid, list]) => {
+    ${shown.length ? [...byVersion.entries()].map(([vid, list]) => {
       const v = vid !== 'general' ? db.get('fileVersions', vid) : null;
       const f = v ? db.get('files', v.fileId) : null;
       return html`<div class="card" style="margin-bottom:12px"><div class="card-head"><h3>${f ? `${f.name} · ${verLabel(v)}` : t('General comments')}</h3>${v ? html`<button class="btn btn-ghost btn-sm" data-action="file-view" data-id="${v.id}">${icon('eye', 14)} ${t('Open viewer')}</button>` : ''}</div>
-        <div class="stack" style="gap:8px">${list.map((c) => html`<div class="comment${c.status === 'resolved' ? ' resolved' : ''}"><div class="comment-meta"><span><b>${c.authorName}</b> · ${fmtDateTime(c.createdAt)}${c.revisionRoundId ? ` · ${t('revision {n}', { n: db.get('revisionRounds', c.revisionRoundId)?.number })}` : ''}</span>
-          <span>${c.timecode != null ? html`<span class="tc" dir="ltr">${fmtTimecode(c.timecode)}</span>` : ''}${c.pinX != null ? html`<span class="tc">${t('pinned')}</span>` : ''}${c.reference ? html`<span class="tc">${c.reference}</span>` : ''}</span></div>
-          <div>${c.comment}</div><div class="btn-row" style="justify-content:space-between;margin-top:6px"><span class="small muted">${c.status === 'open' ? t('Open') : t('Resolved')}</span><button class="link-btn small" data-action="fb-status" data-id="${c.id}" data-status="${c.status === 'open' ? 'resolved' : 'open'}">${c.status === 'open' ? t('Mark resolved') : t('Reopen')}</button></div></div>`)}</div></div>`;
+        <div class="comments" style="max-height:none">${conversation(withReplies(list))}</div></div>`;
     }) : empty({ title: show === 'open' ? t('No open feedback') : t('No feedback'), body: t('When the client comments on a shared version — with timestamps on video or pins on images — it appears here.') })}`;
 }
 
@@ -155,7 +155,15 @@ export function approvalsTab(p) {
   const list = listApprovals(p.id);
   const canRequest = ['active', 'in_review', 'revision_requested'].includes(p.status) && !list.some((a) => a.status === 'pending');
   const files = listFiles(p.id).filter((f) => f.latest && ['review', 'final', 'drafts'].includes(f.folder));
-  return html`${canRequest ? html`<form class="card form-grid" data-form="approval-create" style="margin-bottom:20px"><input type="hidden" name="id" value="${p.id}">
+  const approved = ['approved', 'completed'].includes(p.status) ? list.filter((a) => a.status === 'approved').sort((a, z) => (z.respondedAt || '').localeCompare(a.respondedAt || ''))[0] : null;
+  return html`${approved ? html`<section class="approved-state" style="margin-bottom:20px">
+      ${checkBadge()}<h2>${t('Approved')}</h2>
+      <p class="muted" style="margin:0">${t('Final version confirmed by {name}.', { name: approved.clientName })}</p>
+      <div class="next-box"><div class="eyebrow" style="margin:0">${t('Next step')}</div>
+        ${p.deliveredAt ? html`<div>${t('✓ Final files delivered {date}.', { date: fmtShortDate(p.deliveredAt) })}</div><a class="btn btn-secondary" href="${href(`/projects/${p.id}/invoices`)}">${t('Invoices')} ${icon('arrow', 16)}</a>`
+          : html`<div>${t('Upload the final files to 06 Deliverables, then deliver them.')}</div><a class="btn btn-primary" href="${href(`/projects/${p.id}/files?folder=deliverables`)}">${t('Deliver Files')} ${icon('arrow', 16)}</a>`}</div>
+    </section>` : ''}
+    ${canRequest ? html`<form class="card form-grid" data-form="approval-create" style="margin-bottom:20px"><input type="hidden" name="id" value="${p.id}">
       <div class="full"><h2>${t('Request final approval')}</h2><p class="small muted" style="margin:4px 0 0">${t('The client sees “Final Approval Required” with Approve and Request Changes.')}</p></div>
       ${files.length ? html`${field({ label: t('Version to approve'), name: 'fileVersionId', type: 'select', options: files.flatMap((f) => f.versions.slice().reverse().map((v) => [v.id, `${f.name} · ${verLabel(v)}`])), full: true })}
         ${field({ label: t('Message (optional)'), name: 'message', type: 'textarea', rows: 2, full: true, value: t('This version is ready for final approval.') })}
@@ -187,14 +195,13 @@ onAction({
     if (!(await confirmDialog({ title: t('Delete {file}?', { file: f.name }), body: `${t('All versions are permanently deleted.')}${hasFinal ? ` ${t('This file includes a Final version.')}` : ''}`, confirm: t('Delete'), tone: 'danger', requireText: hasFinal ? 'DELETE' : '' }))) return false;
     await deleteFile(f.id, { confirmFinal: true }); toast(t('File deleted.'));
   },
-  'fb-status': (el) => { setFeedbackStatus(el.dataset.id, el.dataset.status); },
   'feedback-note': (el) => {
     openModal(html`${modalHead(t('Add a note'), t('General comment on the project, visible to the client in the portal feedback.'))}<form class="form-stack" data-form="feedback-note"><input type="hidden" name="id" value="${el.dataset.id}"><textarea name="comment" rows="4" required aria-label="${t('Comment')}"></textarea><div class="form-actions"><button class="btn btn-primary" type="submit">${t('Add')}</button></div></form>`);
     return false;
   },
   'feedback-summary': async (el) => {
     const p = getProject(el.dataset.id);
-    const r = await runAI('feedback', { ctx: { project: p.name, feedback: listFeedback(p.id).filter((f) => f.status === 'open').map((f) => ({ comment: f.comment, at: f.timecode != null ? fmtTimecode(f.timecode) : f.reference || '' })) } });
+    const r = await runAI('feedback', { ctx: { project: p.name, feedback: listFeedback(p.id).filter((f) => f.status === 'open' && !f.parentId).map((f) => ({ comment: f.comment, at: f.timecode != null ? fmtTimecode(f.timecode) : f.reference || '' })) } });
     openModal(html`${modalHead(t('Feedback summary'), r.provider === 'anthropic' ? t('Suggested by Claude — review before using.') : t('Suggested by the local assistant — review before using.'))}<textarea class="ai-out" rows="14" aria-label="${t('Summary')}">${r.text}</textarea><div class="modal-actions"><button class="btn btn-secondary" data-action="copy-ai">${t('Copy')}</button><button class="btn btn-primary" data-action="modal-close">${t('Done')}</button></div>`, { size: 'lg' });
     return false;
   },
@@ -211,7 +218,8 @@ onAction({
     const locked = p.lockDeliveryUntilPaid && financials(p).balance > 0;
     if (!(await confirmDialog({ title: t('Deliver final files?'), body: locked ? t('Files in 06 Deliverables become downloadable for the client once the balance is paid. A final invoice is drafted for any remaining balance.') : t('Files in 06 Deliverables become downloadable for the client. A final invoice is drafted for any remaining balance.'), confirm: t('Deliver') }))) return false;
     const inv = deliverFinal(p.id);
-    toast(inv ? t('Delivered. Final invoice {number} is ready to send.', { number: inv.number }) : t('Final files delivered.'));
+    if (inv) successCard({ title: t('Delivered. Final invoice {number} is ready to send.', { number: inv.number }), href: `/invoices/${inv.id}`, label: t('Open invoice') });
+    else toast(t('Final files delivered.'));
   },
 });
 
@@ -228,5 +236,5 @@ onForm({
   'file-move': (v) => { moveFile(v.id, v.folder); closeModal(); toast(t('Moved.')); },
   'feedback-note': (v) => { addFeedback(v.id, { comment: v.comment }); closeModal(); },
   'round-log': (v) => { logRevisionRequest(v.id, v.summary); toast(t('Revision round created.')); },
-  'approval-create': (v) => { requestApproval(v.id, v); toast(t('Sent to the client for final approval.')); },
+  'approval-create': (v) => { requestApproval(v.id, v); successCard({ title: t('Sent to the client for final approval.'), next: t('Waiting for the client.') }); },
 });

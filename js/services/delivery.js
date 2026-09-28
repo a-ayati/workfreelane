@@ -201,31 +201,50 @@ function versionFor(p, versionId) {
   if (!v || v.projectId !== p.id) throw new UserError(t('That file version was not found.'));
   return v;
 }
+// A reply joins a top-level comment's thread and inherits its file/version.
+function parentFor(p, parentId) {
+  if (!parentId) return null;
+  const parent = db.get('feedback', parentId);
+  if (!parent || parent.projectId !== p.id) throw new UserError(t('That comment was not found.'));
+  if (parent.parentId) throw new UserError(t('You can only reply to a top-level comment.'));
+  return parent;
+}
+function feedbackRow(p, data, authorType, authorName) {
+  const parent = parentFor(p, data.parentId);
+  if (parent) {
+    return { projectId: p.id, fileId: parent.fileId, fileVersionId: parent.fileVersionId, authorType, authorName, status: parent.status, revisionRoundId: parent.revisionRoundId, parentId: parent.id, comment: req(data.comment, 'Comment', 'comment', 3000), timecode: null, pinX: null, pinY: null, reference: '' };
+  }
+  const v = versionFor(p, data.fileVersionId);
+  return { projectId: p.id, fileId: v?.fileId || null, fileVersionId: v?.id || null, authorType, authorName, status: 'open', revisionRoundId: null, parentId: null, ...cleanFeedback(data), _version: v };
+}
 export function addFeedback(projectId, data) {
   const p = requireProject(projectId);
-  const v = versionFor(p, data.fileVersionId);
-  return db.insert('feedback', { projectId: p.id, fileId: v?.fileId || null, fileVersionId: v?.id || null, authorType: 'freelancer', authorName: freelancerActor().name, status: 'open', revisionRoundId: null, ...cleanFeedback(data) });
+  const { _version, ...row } = feedbackRow(p, data, 'freelancer', freelancerActor().name);
+  return db.insert('feedback', row);
 }
 export function portalAddFeedback(projectId, token, data) {
   const p = portalProject(projectId, token);
   if (['completed', 'cancelled'].includes(p.status)) throw new UserError(t('This project is closed.'));
-  const v = versionFor(p, data.fileVersionId);
-  if (v) { const f = db.get('files', v.fileId); if (!portalCanSee(p, f)) throw new ForbiddenError(t('This file is not shared with you.')); }
   const actor = clientActor(p, data.name);
-  const fb = db.insert('feedback', { projectId: p.id, fileId: v?.fileId || null, fileVersionId: v?.id || null, authorType: 'client', authorName: actor.name, status: 'open', revisionRoundId: null, ...cleanFeedback(data) });
-  if (v) {
+  const { _version: v, ...row } = feedbackRow(p, data, 'client', actor.name);
+  if (row.fileId) { const f = db.get('files', row.fileId); if (!portalCanSee(p, f)) throw new ForbiddenError(t('This file is not shared with you.')); }
+  const fb = db.insert('feedback', row);
+  if (fb.parentId) logActivity(p, actor, 'feedback.replied', 'Client replied to a comment');
+  else if (v) {
     const vars = { file: db.get('files', v.fileId).name, version: v.label, at: fb.timecode != null ? fmtTimecode(fb.timecode) : '' };
     if (fb.timecode != null) logActivity(p, actor, 'feedback.added', 'Client left feedback on {file} {version} at {at}', vars);
     else if (fb.pinX != null) logActivity(p, actor, 'feedback.added', 'Client left feedback on {file} {version} (pinned)', vars);
     else logActivity(p, actor, 'feedback.added', 'Client left feedback on {file} {version}', vars);
   } else logActivity(p, actor, 'feedback.added', 'Client left feedback');
-  notifyOwner(p, { type: 'client_action', title: 'New feedback', body: '{name}: "{comment}"', vars: { name: actor.name, comment: fb.comment.slice(0, 120) }, link: `/projects/${p.id}/feedback` });
+  notifyOwner(p, { type: 'client_action', title: fb.parentId ? 'New reply' : 'New feedback', body: '{name}: "{comment}"', vars: { name: actor.name, comment: fb.comment.slice(0, 120) }, link: `/projects/${p.id}/feedback` });
   return fb;
 }
 export function setFeedbackStatus(id, status) {
   const fb = requireOwned('feedback', id, 'feedback');
   if (!['open', 'resolved'].includes(status)) throw new UserError(t('Unknown status.'));
-  db.update('feedback', fb.id, { status });
+  const root = fb.parentId ? db.get('feedback', fb.parentId) : fb;
+  // Resolving acts on the whole thread.
+  db.all('feedback', (x) => x.id === root.id || x.parentId === root.id).forEach((x) => db.update('feedback', x.id, { status }));
 }
 
 // ---------- Revision rounds ----------
@@ -235,7 +254,7 @@ function openRound(p, actor, summary, loggedByFreelancer = false) {
   const number = listRounds(p.id).length + 1;
   const isExtra = number > (p.revisionsIncluded || 0);
   const round = db.insert('revisionRounds', { projectId: p.id, number, status: 'requested', isExtra, summary: opt(summary, 3000), loggedByFreelancer, requestedBy: actor.name, requestedAt: nowISO(), deliveredAt: null, deliveredVersionId: null, changeOrderId: null });
-  db.all('feedback', (f) => f.projectId === p.id && f.status === 'open' && !f.revisionRoundId).forEach((f) => db.update('feedback', f.id, { revisionRoundId: round.id }));
+  db.all('feedback', (f) => f.projectId === p.id && f.status === 'open' && !f.revisionRoundId).forEach((f) => db.update('feedback', f.id, { revisionRoundId: round.id })); // replies follow their thread
   db.update('projects', p.id, { status: 'revision_requested' });
   const vars = { n: number, max: p.revisionsIncluded };
   if (isExtra) logActivity(p, actor, 'revision.requested', 'Revision {n} requested — exceeds the {max} included round(s)', vars);

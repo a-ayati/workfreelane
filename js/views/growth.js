@@ -1,5 +1,5 @@
 // Portfolio, analytics, AI assistant, all-files index, search and notifications.
-import { html, raw, icon, href, empty, pageHead, field, onAction, onForm, go, toast, confirmDialog, pill, comingSoon } from '../ui.js';
+import { html, raw, icon, href, empty, pageHead, field, onAction, onForm, go, toast, confirmDialog, pill, comingSoon, rerender } from '../ui.js';
 import { db } from '../core/store.js';
 import { t, lang, locale } from '../core/i18n.js';
 import { fmtMoney, fmtNumber, fmtShortDate, fmtRelative, fmtBytes, humanError, fmtTimecode } from '../core/util.js';
@@ -155,12 +155,13 @@ export function aiView() {
     <div class="ai-grid">
       <nav class="ai-tasks" aria-label="${t('Assistant tasks')}">${Object.entries(AI_TASKS).map(([k, v]) => html`<button class="${k === aiState.task ? 'active' : ''}" data-action="ai-task" data-task="${k}"${k === aiState.task ? raw(' aria-current="true"') : ''}>${t(v.label)}</button>`)}</nav>
       <div class="stack">
-        <form class="card form-stack" data-form="ai-run">
+        <form class="card form-stack" data-form="ai-run" id="ai-run-form">
           ${field({ label: t('Project (optional)'), name: 'projectId', type: 'select', value: aiState.projectId, options: [['', t('— None —')], ...projects.map((p) => [p.id, `${p.name} · ${db.get('clients', p.clientId)?.name}`])] })}
           ${field({ label: t('Your input'), name: 'text', type: 'textarea', rows: 4, value: aiState.text, placeholder: t(task.placeholder) })}
           <div class="btn-row" style="justify-content:space-between"><span class="small muted">${aiConfig.provider() === 'anthropic' ? t('Using Claude (your API key)') : t('Using the built-in local assistant')} · <a href="${href('/settings/ai')}">${t('Change')}</a></span><button class="btn btn-primary" type="submit">${icon('sparkles', 16)} ${t('Generate')}</button></div>
         </form>
-        ${aiState.error ? html`<div class="notice notice-err">${aiState.error}</div>` : ''}
+        ${aiState.error ? html`<div class="notice notice-err" role="alert">${aiState.error} <button class="link-btn" type="submit" form="ai-run-form">${t('Try Again')}</button></div>` : ''}
+        ${aiState.loading ? html`<div class="card ai-thinking" role="status" aria-label="${t('Generating…')}"><div class="small muted">${icon('sparkles', 14)} ${t('Generating…')}</div><div class="skel" style="width:92%"></div><div class="skel" style="width:78%"></div><div class="skel" style="width:85%"></div><div class="skel" style="width:60%"></div></div>` : ''}
         ${r ? html`<div class="card"><div class="card-head"><h2>${t('Suggestion')}</h2><span class="small muted">${t('Review and edit before using')}</span></div>
           ${r.kind === 'brief' ? html`<dl class="kv">${Object.entries(r.data).map(([k, v]) => html`<dt>${t(BRIEF_KEYS[k] || k)}</dt><dd class="prose">${k === 'type' ? t(v) : v}</dd>`)}</dl>
             <p class="small muted" style="margin-top:12px">${t("To apply this to a project, open the project's Brief tab and use the brief assistant there — you'll review every field first.")}</p>`
@@ -213,8 +214,9 @@ onAction({
 onForm({
   'pf-save': (v) => { const it = savePortfolioItem(v.id || null, v); toast(t('Portfolio item saved.')); go(`/portfolio/${it.id}`); return false; },
   'ai-run': async (v) => {
-    aiState.projectId = v.projectId; aiState.text = v.text; aiState.error = null; aiState.result = null;
-    try { aiState.result = await runAI(aiState.task, { text: v.text, ctx: aiContext(aiState.task, v.projectId) }); } catch (e) { aiState.error = humanError(e); }
+    aiState.projectId = v.projectId; aiState.text = v.text; aiState.error = null; aiState.result = null; aiState.loading = true;
+    rerender();
+    try { aiState.result = await runAI(aiState.task, { text: v.text, ctx: aiContext(aiState.task, v.projectId) }); } catch (e) { aiState.error = humanError(e); } finally { aiState.loading = false; }
   },
 });
 

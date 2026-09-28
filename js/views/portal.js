@@ -1,6 +1,6 @@
 // Client portal — simple, mobile-first, limited to one project via its secret link.
 // Shown in the client's language (set by the freelancer; the client can switch).
-import { html, raw, icon, href, pill, empty, field, tabs, onAction, onForm, toast, confirmDialog, go } from '../ui.js';
+import { html, raw, icon, href, pill, empty, field, tabs, onAction, onForm, toast, confirmDialog, go, checkBadge } from '../ui.js';
 import { db } from '../core/store.js';
 import { auth } from '../core/auth.js';
 import { t, normLang } from '../core/i18n.js';
@@ -13,7 +13,7 @@ import { portalFiles, portalUpload, portalAddFeedback, listFeedback, listRounds,
 import { PAYMENT_METHODS } from '../core/payments.js';
 import { INVOICE_STATUSES, CO_STATUSES, FOLDERS } from '../services/constants.js';
 import { proposalDoc, contractDoc, invoiceDoc } from './documents.js';
-import { thumb, openViewer, download, verLabel } from './viewer.js';
+import { thumb, openViewer, download, verLabel, conversation } from './viewer.js';
 
 const CLIENT_STATUS = {
   draft: { label: 'Getting started', tone: 'neutral' }, awaiting_deposit: { label: 'Awaiting deposit', tone: 'amber' }, active: { label: 'In progress', tone: 'green' },
@@ -185,11 +185,17 @@ function files(ctx) {
 function feedback({ p, token, name }) {
   const list = listFeedback(p.id);
   const canRequest = ['in_review', 'awaiting_approval'].includes(p.status);
+  const closed = ['completed', 'cancelled'].includes(p.status);
+  const general = list.filter((c) => !c.fileVersionId);
+  const byVersion = new Map();
+  list.filter((c) => c.fileVersionId).forEach((c) => { if (!byVersion.has(c.fileVersionId)) byVersion.set(c.fileVersionId, []); byVersion.get(c.fileVersionId).push(c); });
+  const cctx = { token, name };
   return html`${canRequest ? html`<div class="notice" style="margin-bottom:16px">${t('Tip: open a file in Files to comment at an exact moment of a video or a spot on an image.')} <a href="${href(`/client/${p.id}/files?t=${token}`)}">${t('Files')}</a></div>` : ''}
-    <form class="card form-stack" data-form="portal-comment" style="margin-bottom:20px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}">
+    ${!closed ? html`<form class="card form-stack" data-form="portal-comment" style="margin-bottom:20px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}">
       <h2>${t('General comment')}</h2><input name="name" value="${name}" placeholder="${t('Your name')}" aria-label="${t('Your name')}" required>
-      <textarea name="comment" rows="3" placeholder="${t('Share your thoughts…')}" aria-label="${t('Comment')}" required></textarea><div><button class="btn btn-primary" type="submit">${t('Send comment')}</button></div></form>
-    ${list.length ? html`<div class="stack" style="gap:8px">${list.slice().reverse().map((c) => { const v = c.fileVersionId ? db.get('fileVersions', c.fileVersionId) : null; return html`<div class="comment"><div class="comment-meta"><span><b>${c.authorName}</b> · ${fmtDateTime(c.createdAt)}${v ? ` · ${db.get('files', v.fileId)?.name} ${verLabel(v)}` : ''}</span><span>${c.timecode != null ? html`<span class="tc" dir="ltr">${fmtTimecode(c.timecode)}</span>` : ''}${c.status === 'resolved' ? html`<span class="small muted">${t('Resolved')}</span>` : ''}</span></div>${c.comment}</div>`; })}</div>` : ''}`;
+      <textarea name="comment" rows="3" placeholder="${t('Share your thoughts…')}" aria-label="${t('Comment')}" required></textarea><div><button class="btn btn-primary" type="submit">${t('Send comment')}</button></div></form>` : ''}
+    ${[...byVersion.entries()].reverse().map(([vid, items]) => { const v = db.get('fileVersions', vid); const f = v && db.get('files', v.fileId); return html`<div class="card" style="margin-bottom:12px"><div class="card-head"><h3>${f?.name || t('File')} · ${verLabel(v)}</h3>${v ? html`<button class="btn btn-ghost btn-sm" data-action="portal-view" data-id="${v.id}" data-pid="${p.id}" data-t="${token}">${icon('eye', 14)} ${t('Open viewer')}</button>` : ''}</div><div class="comments" style="max-height:none">${conversation(items, { isClient: true, ctx: cctx, canReply: !closed })}</div></div>`; })}
+    ${general.length ? html`<div class="card"><div class="card-head"><h3>${t('General comments')}</h3></div><div class="comments" style="max-height:none">${conversation(general, { isClient: true, ctx: cctx, canReply: !closed })}</div></div>` : ''}`;
 }
 
 function revisions({ p, token, name }) {
@@ -207,18 +213,39 @@ function revisions({ p, token, name }) {
     ${rounds.length ? html`<div class="list" style="margin-top:16px">${rounds.slice().reverse().map((r) => html`<div class="list-row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="cell-title">${t('Revision {n}', { n: r.number })}${r.isExtra ? ` ${t('(additional)')}` : ''}</div><div class="small">${r.summary}</div><div class="cell-sub">${fmtDate(r.requestedAt)}</div></div><span class="pill"><span class="dot"></span>${r.status === 'delivered' ? t('Delivered') : t('In progress')}</span></div>`)}</div>` : !canRequest ? empty({ title: t('No revisions'), body: t('You can request changes once a version is shared for review.') }) : ''}`;
 }
 
-function approval({ p, token, name }) {
+function approval({ p, token, name, link }) {
   const list = listApprovals(p.id).filter((a) => a.status !== 'withdrawn');
   if (!list.length) return empty({ title: t('Nothing to approve yet'), body: t("When the final version is ready, you'll approve it here.") });
   const vl = (a) => (a.versionLabel === 'Final' ? t('Final') : a.versionLabel);
-  return html`<div class="stack">${list.map((a) => a.status === 'pending' ? html`<div class="cta-card attention">
-      <div class="eyebrow">${t('Final Approval Required')}</div><h2>${a.fileName} · ${vl(a)}</h2><p class="muted" style="margin:0">${a.message || t('This version is ready for final approval.')}</p>
-      <div class="btn-row"><button class="btn btn-secondary" data-action="portal-view" data-id="${a.fileVersionId}" data-pid="${p.id}" data-t="${token}">${icon('eye', 16)} ${t('View version')}</button></div>
+  const pending = list.filter((a) => a.status === 'pending');
+  const lastApproved = !pending.length ? list.filter((a) => a.status === 'approved').sort((a, z) => (z.respondedAt || '').localeCompare(a.respondedAt || ''))[0] : null;
+  const history = list.filter((a) => a.status !== 'pending' && a !== lastApproved);
+  const vctx = { projectId: p.id, token };
+  const locked = p.deliveredAt && deliveryLocked(p);
+  const nextStep = !lastApproved ? null
+    : p.deliveredAt && !locked ? [t('Your final files are ready.'), t('Download Files'), link('files')]
+      : locked ? [t('Final files unlock once the final invoice is paid.'), t('View invoice'), link('invoice')]
+        : [t('{business} is preparing your final files.', { business: db.get('businesses', p.businessId)?.name || '' }), '', ''];
+  return html`<div class="stack">
+    ${pending.map((a) => { const v = db.get('fileVersions', a.fileVersionId); return html`<section class="final-review" aria-labelledby="fr-${a.id}">
+      <div class="eyebrow">${t('Final review')}</div>
+      <h2 id="fr-${a.id}">${a.fileName}</h2>
+      <div class="file-name">${vl(a)}${a.message ? html` · ${a.message}` : ''}</div>
+      ${v ? html`<button class="fr-preview" data-action="portal-view" data-id="${a.fileVersionId}" data-pid="${p.id}" data-t="${token}" aria-label="${t('View version')}">${thumb(v, vctx)}<span>${icon('eye', 16)} ${t('View version')}</span></button>` : ''}
+      <p class="question">${t('Everything looks good?')}</p>
       <form class="form-stack" data-form="portal-approval" style="gap:10px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}"><input type="hidden" name="id" value="${a.id}">
         <input name="name" value="${name}" placeholder="${t('Your full name')}" aria-label="${t('Your full name')}" required>
         <textarea name="note" rows="2" placeholder="${t('Changes needed (only if requesting changes)')}" aria-label="${t('Changes needed')}"></textarea>
-        <div class="btn-row"><button class="btn btn-primary btn-lg" type="submit" name="decision" value="approve">${t('Approve')}</button><button class="btn btn-secondary btn-lg" type="submit" name="decision" value="changes">${t('Request Changes')}</button></div></form></div>`
-    : html`<div class="card"><div class="btn-row" style="justify-content:space-between"><b>${a.fileName} · ${vl(a)}</b>${a.status === 'approved' ? html`<span class="pill pill-green"><span class="dot"></span>${t('✓ Approved')}</span>` : html`<span class="pill pill-amber"><span class="dot"></span>${t('Changes requested')}</span>`}</div>
+        <div class="btn-row"><button class="btn btn-secondary btn-lg" type="submit" name="decision" value="changes">${t('Request Changes')}</button><button class="btn btn-primary btn-lg" type="submit" name="decision" value="approve">${icon('check', 18)} ${t('Approve Final')}</button></div>
+        <p class="small muted" style="margin:0">${t('Your approval is recorded with your name, the date and the version.')}</p></form></section>`; })}
+    ${lastApproved ? html`<section class="approved-state" role="status">
+      ${checkBadge()}
+      <h2>${t('Approved')}</h2>
+      <p class="muted" style="margin:0">${t('Final version confirmed.')}</p>
+      <p class="small muted" style="margin:0">${lastApproved.fileName} · ${vl(lastApproved)} · ${t('Approved by {name} on {date}', { name: lastApproved.clientName, date: fmtDateTime(lastApproved.respondedAt) })}</p>
+      <div class="next-box"><div class="eyebrow" style="margin:0">${t('Next step')}</div><div>${nextStep[0]}</div>${nextStep[1] ? html`<a class="btn btn-primary" href="${href(nextStep[2])}">${nextStep[1]} ${icon('arrow', 16)}</a>` : ''}</div>
+    </section>` : ''}
+    ${history.map((a) => html`<div class="card"><div class="btn-row" style="justify-content:space-between"><b>${a.fileName} · ${vl(a)}</b>${a.status === 'approved' ? html`<span class="pill pill-green"><span class="dot"></span>${t('✓ Approved')}</span>` : html`<span class="pill pill-amber"><span class="dot"></span>${t('Changes requested')}</span>`}</div>
       <p class="small muted" style="margin:6px 0 0">${a.status === 'approved' ? t('Approved by {name} on {date}', { name: a.clientName, date: fmtDateTime(a.respondedAt) }) : `${a.clientName}: ${a.note}`}</p></div>`)}</div>`;
 }
 
@@ -268,9 +295,11 @@ onForm({
   'portal-approval': async (v, form, submitter) => {
     remember(v);
     if (submitter?.value === 'approve') {
-      if (!(await confirmDialog({ title: t('Approve final version?'), body: t('Your approval is recorded with your name, the date and the version.'), confirm: t('Approve') }))) return false;
-      portalRespondApproval(v.pid, v.t, v.id, { decision: 'approve', name: v.name, note: v.note }); toast(t('Approved. Thank you!'));
-    } else { portalRespondApproval(v.pid, v.t, v.id, { decision: 'changes', name: v.name, note: v.note }); toast(t('Changes requested.')); }
+      if (!(await confirmDialog({ title: t('Approve final version?'), body: t('Your approval is recorded with your name, the date and the version.'), confirm: t('Approve Final') }))) return false;
+      portalRespondApproval(v.pid, v.t, v.id, { decision: 'approve', name: v.name, note: v.note });
+    } else {
+      portalRespondApproval(v.pid, v.t, v.id, { decision: 'changes', name: v.name, note: v.note }); toast(t('Changes requested.'));
+    }
   },
   'portal-pay': (v) => { portalReportPayment(v.pid, v.t, v.id, v); toast(t('Thanks — your freelancer will confirm the payment.')); },
   'portal-upload': async (v, form) => {

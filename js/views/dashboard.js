@@ -1,3 +1,5 @@
+// Dashboard — a workspace, not a report: greeting → needs your attention →
+// active projects → recent activity → revenue.
 import { html, icon, href, pill, empty, progressBar } from '../ui.js';
 import { db } from '../core/store.js';
 import { t, locale } from '../core/i18n.js';
@@ -19,11 +21,25 @@ export function projectRow(p, clientName) {
   const na = nextAction(p);
   const late = isOverdue(p);
   return html`<a class="list-row cols-project" href="${href(`/projects/${p.id}`)}">
-    <div><div class="cell-title">${p.name}</div><div class="cell-sub">${clientName}</div>${progressBar(progress(p), t('{name} progress', { name: p.name }))}</div>
+    <div><div class="cell-title">${p.name}</div><div class="cell-sub">${clientName}</div>${progressBar(progress(p), t('{name} progress', { name: p.name }), `row-${p.id}`)}</div>
     <div>${pill(PROJECT_STATUSES, p.status)}</div>
-    <div class="hide-sm hide-md"><div class="${late ? 'pill-red' : ''}" style="font-size:13.5px">${p.deadline ? t('Due {date}', { date: fmtShortDate(p.deadline) }) : t('No deadline')}</div><div class="cell-sub">${progress(p)}%</div></div>
+    <div class="hide-sm hide-md"><div class="${late ? 'pill-red' : ''}" style="font-size:13.5px;background:none">${p.deadline ? t('Due {date}', { date: fmtShortDate(p.deadline) }) : t('No deadline')}</div><div class="cell-sub">${progress(p)}%</div></div>
     <div class="hide-sm hide-md"><div class="num" style="font-size:13.5px">${fmtMoney(f.total, p.currency)}</div><div class="cell-sub">${t('{n}% paid', { n: f.paidPct })}</div></div>
-    <div class="next-step${na.waiting ? ' waiting' : ''}"><b>${na.waiting ? '' : html`${icon('arrow', 13)} `}${na.label}</b><span>${na.detail || ''}</span></div>
+    <div class="next-step${na.waiting ? ' waiting' : ''}"><b>${na.label}${na.waiting ? '' : html` ${icon('arrow', 13)}`}</b><span>${na.detail || ''}</span></div>
+  </a>`;
+}
+
+// Interactive project surface: status, progress and one dominant next action.
+export function projectCard(p, clientName) {
+  const f = financials(p);
+  const na = nextAction(p);
+  const pct = progress(p);
+  const late = isOverdue(p);
+  return html`<a class="pcard" href="${href(na.href && !na.waiting ? na.href : `/projects/${p.id}`)}" aria-label="${p.name} — ${na.label}">
+    <div class="pc-top"><div><div class="pc-name">${p.name}</div><div class="pc-client">${clientName}</div></div>${pill(PROJECT_STATUSES, p.status)}</div>
+    <div><div class="pc-pct"><span data-count="${pct}" data-key="pct-${p.id}">${pct}</span><small>%</small></div>${progressBar(pct, t('{name} progress', { name: p.name }), `card-${p.id}`)}</div>
+    <div class="pc-meta"><span style="${late ? 'color:var(--red)' : ''}">${p.deadline ? t('Due {date}', { date: fmtShortDate(p.deadline) }) : t('No deadline')}</span><span class="num">${fmtMoney(f.total, p.currency)} · ${t('{n}% paid', { n: f.paidPct })}</span></div>
+    <div class="pc-action${na.waiting ? ' waiting' : ''}"><span>${na.waiting ? na.detail || na.label : na.label}</span>${na.waiting ? '' : icon('arrow', 16)}</div>
   </a>`;
 }
 
@@ -35,24 +51,24 @@ function todaysActions() {
   const tomorrow = addDays(clock.now(), 1).toISOString().slice(0, 10);
   db.all('payments', (x) => x.businessId === b.id && x.status === 'reported').forEach((x) => {
     const inv = db.get('invoices', x.invoiceId);
-    out.push({ tone: 'green', text: t('{client} reported a payment on invoice {number}', { client: clientName(inv.clientId), number: inv.number }), sub: t('Confirm it once received'), link: `/invoices/${inv.id}` });
+    out.push({ tone: 'green', text: t('{client} reported a payment on invoice {number}', { client: clientName(inv.clientId), number: inv.number }), sub: t('Confirm it once received'), link: `/invoices/${inv.id}`, cta: t('Confirm payment') });
   });
   listProjects({ status: 'open' }).forEach((p) => {
     const brief = db.find('briefs', (x) => x.projectId === p.id);
-    if (brief?.status === 'submitted') out.push({ tone: 'blue', text: t('{client} is waiting for your response', { client: clientName(p.clientId) }), sub: t('Brief submitted for {project}', { project: p.name }), link: `/projects/${p.id}/brief` });
+    if (brief?.status === 'submitted') out.push({ tone: 'blue', text: t('{client} is waiting for your response', { client: clientName(p.clientId) }), sub: t('Brief submitted for {project}', { project: p.name }), link: `/projects/${p.id}/brief`, cta: t('Review brief') });
     if (p.status === 'revision_requested') {
       const r = db.all('revisionRounds', (x) => x.projectId === p.id && x.status !== 'delivered')[0];
-      out.push({ tone: r?.isExtra ? 'red' : 'blue', text: t('{client} requested a revision', { client: clientName(p.clientId) }), sub: r ? t('{project} · revision {n} of {max}', { project: p.name, n: r.number, max: p.revisionsIncluded }) : p.name, link: `/projects/${p.id}/revisions` });
+      out.push({ tone: r?.isExtra ? 'red' : 'blue', text: t('{client} requested a revision', { client: clientName(p.clientId) }), sub: r ? t('{project} · revision {n} of {max}', { project: p.name, n: r.number, max: p.revisionsIncluded }) : p.name, link: `/projects/${p.id}/revisions`, cta: t('Open revision') });
     }
-    if (p.deadline === tomorrow) out.push({ tone: 'amber', text: t('{project} deadline is tomorrow', { project: p.name }), sub: nextAction(p).label, link: `/projects/${p.id}` });
-    else if (p.deadline === today) out.push({ tone: 'amber', text: t('{project} is due today', { project: p.name }), sub: nextAction(p).label, link: `/projects/${p.id}` });
-    else if (isOverdue(p)) out.push({ tone: 'red', text: t('{project} is past its deadline', { project: p.name }), sub: t('Was due {date}', { date: fmtShortDate(p.deadline) }), link: `/projects/${p.id}` });
-    const newFeedback = db.count('feedback', (f) => f.projectId === p.id && f.authorType === 'client' && f.status === 'open' && !f.revisionRoundId);
-    if (newFeedback && p.status === 'in_review') out.push({ tone: 'blue', text: t(newFeedback === 1 ? '1 new comment on {project}' : '{n} new comments on {project}', { n: newFeedback, project: p.name }), sub: clientName(p.clientId), link: `/projects/${p.id}/feedback` });
+    if (p.deadline === tomorrow) out.push({ tone: 'amber', text: t('{project} deadline is tomorrow', { project: p.name }), sub: nextAction(p).label, link: `/projects/${p.id}`, cta: t('Open project') });
+    else if (p.deadline === today) out.push({ tone: 'amber', text: t('{project} is due today', { project: p.name }), sub: nextAction(p).label, link: `/projects/${p.id}`, cta: t('Open project') });
+    else if (isOverdue(p)) out.push({ tone: 'red', text: t('{project} is past its deadline', { project: p.name }), sub: t('Was due {date}', { date: fmtShortDate(p.deadline) }), link: `/projects/${p.id}`, cta: t('Open project') });
+    const newFeedback = db.count('feedback', (f) => f.projectId === p.id && f.authorType === 'client' && f.status === 'open' && !f.revisionRoundId && !f.parentId);
+    if (newFeedback && p.status === 'in_review') out.push({ tone: 'blue', text: t(newFeedback === 1 ? '1 new comment on {project}' : '{n} new comments on {project}', { n: newFeedback, project: p.name }), sub: clientName(p.clientId), link: `/projects/${p.id}/feedback`, cta: t('Read feedback') });
   });
-  listInvoices({ status: 'overdue' }).forEach((i) => out.push({ tone: 'red', text: t('Invoice {number} is overdue', { number: i.number }), sub: t('{client} · due {date}', { client: clientName(i.clientId), date: fmtShortDate(i.dueDate) }), link: `/invoices/${i.id}` }));
-  listInvoices({ status: 'draft' }).forEach((i) => out.push({ tone: 'amber', text: t('Invoice {number} is ready to send', { number: i.number }), sub: clientName(i.clientId), link: `/invoices/${i.id}` }));
-  listReminders().filter((r) => r.dueDate <= today).forEach((r) => out.push({ tone: 'green', text: t('Follow up with {client}', { client: clientName(r.clientId) }), sub: r.note, link: `/clients/${r.clientId}` }));
+  listInvoices({ status: 'overdue' }).forEach((i) => out.push({ tone: 'red', text: t('Invoice {number} is overdue', { number: i.number }), sub: t('{client} · due {date}', { client: clientName(i.clientId), date: fmtShortDate(i.dueDate) }), link: `/invoices/${i.id}`, cta: t('View invoice') }));
+  listInvoices({ status: 'draft' }).forEach((i) => out.push({ tone: 'amber', text: t('Invoice {number} is ready to send', { number: i.number }), sub: clientName(i.clientId), link: `/invoices/${i.id}`, cta: t('Send invoice') }));
+  listReminders().filter((r) => r.dueDate <= today).forEach((r) => out.push({ tone: 'green', text: t('Follow up with {client}', { client: clientName(r.clientId) }), sub: r.note, link: `/clients/${r.clientId}`, cta: t('Open client') }));
   return out.slice(0, 8);
 }
 
@@ -67,35 +83,43 @@ export function dashboard() {
   const acts = todaysActions();
   const activity = recentActivity(8);
   const first = u.name.split(' ')[0];
+  const activeCount = projects.filter((x) => x.status !== 'draft').length;
+  const lead = activeCount ? t(activeCount === 1 ? 'You have 1 active project.' : 'You have {n} active projects.', { n: activeCount }) : t('No active projects yet.');
+  const attn = acts.length ? ` ${t(acts.length === 1 ? '1 thing needs your attention.' : '{n} things need your attention.', { n: acts.length })}` : '';
   return html`
-    <header class="page-head"><div class="page-head-row"><div>
-      <div class="eyebrow">${clock.now().toLocaleDateString(locale(), { weekday: 'long', month: 'long', day: 'numeric' })}</div>
-      <h1>${t('{greeting}, {name}', { greeting: greeting(), name: first })}</h1></div>
-      <div class="page-actions"><a class="btn btn-primary" href="${href('/projects/new')}">${icon('plus', 16)} ${t('New Project')}</a></div></div></header>
+    <header class="hello page-head-row" style="align-items:flex-end">
+      <div>
+        <div class="eyebrow">${clock.now().toLocaleDateString(locale(), { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+        <h1>${t('{greeting}, {name}.', { greeting: greeting(), name: first })}</h1>
+        <p>${lead}${attn}</p>
+      </div>
+      <div class="page-actions"><a class="btn btn-primary" href="${href('/projects/new')}">${icon('plus', 16)} ${t('New Project')}</a></div>
+    </header>
 
-    <section class="metrics" aria-label="${t('Key figures')}">
-      <a class="metric" href="${href('/payments')}"><div class="metric-label">${t('Revenue this month')}</div><div class="metric-value">${fmtNumber(d.revenueThisMonth)}<small>${cur}</small></div></a>
-      <a class="metric" href="${href('/invoices')}"><div class="metric-label">${t('Pending')}</div><div class="metric-value">${fmtNumber(d.pending)}<small>${cur}</small></div></a>
-      <a class="metric" href="${href('/projects')}"><div class="metric-label">${t('Active projects')}</div><div class="metric-value">${d.active}</div></a>
-      <a class="metric" href="${href('/projects?status=awaiting_approval')}"><div class="metric-label">${t('Awaiting approval')}</div><div class="metric-value">${d.awaitingApproval}</div></a>
-      <a class="metric${d.overdue ? ' alert' : ''}" href="${href('/invoices?status=overdue')}"><div class="metric-label">${t('Overdue')}</div><div class="metric-value">${d.overdue}</div></a>
-    </section>
-
-    <section class="section">
-      <div class="section-head"><h2>${t("Today's actions")}</h2></div>
-      ${acts.length ? html`<ul class="actions-list">${acts.map((a) => html`<li><a href="${href(a.link)}"><span class="a-dot ${a.tone}" aria-hidden="true"></span><span class="a-text">${a.text}<span>${a.sub}</span></span>${icon('arrow', 16)}</a></li>`)}</ul>`
+    <section aria-labelledby="att-h">
+      <div class="section-head"><h2 id="att-h">${t('Needs your attention')}</h2></div>
+      ${acts.length ? html`<div class="attention">${acts.map((a) => html`<a class="att ${a.tone}" href="${href(a.link)}"><b>${a.text}</b><span class="sub">${a.sub}</span><span class="go">${a.cta || t('Open')} ${icon('arrow', 14)}</span></a>`)}</div>`
         : html`<div class="notice">${t('Nothing urgent. Every project is moving — check the next steps below.')}</div>`}
     </section>
 
-    <section class="section">
-      <div class="section-head"><h2>${t('Projects in progress')}</h2><a href="${href('/projects')}">${t('All projects')}</a></div>
-      ${projects.length ? html`<div class="list">
-        <div class="list-row list-head cols-project"><div>${t('Project')}</div><div>${t('Status')}</div><div class="hide-md">${t('Deadline')}</div><div class="hide-md">${t('Amount')}</div><div>${t('Next step')}</div></div>
-        ${projects.map((p) => projectRow(p, clientName(p.clientId)))}</div>`
+    <section class="section" aria-labelledby="proj-h">
+      <div class="section-head"><h2 id="proj-h">${t('Active projects')}</h2><a href="${href('/projects')}">${t('All projects')}</a></div>
+      ${projects.length ? html`<div class="pcards">${projects.map((p) => projectCard(p, clientName(p.clientId)))}</div>`
         : empty({ title: t('No projects yet'), body: t('Your projects will appear here.'), cta: html`<a class="btn btn-primary" href="${href('/projects/new')}">${t('+ Create Your First Project')}</a>` })}
     </section>
 
     ${activity.length ? html`<section class="section"><div class="section-head"><h2>${t('Recent activity')}</h2></div>
       <div class="card"><ul class="timeline">${activity.map((a) => html`<li><time datetime="${a.createdAt}">${fmtRelative(a.createdAt)}</time><div>${activityText(a)}<div class="who">${a.actorName} · ${db.get('projects', a.projectId)?.name || ''}</div></div></li>`)}</ul></div></section>` : ''}
+
+    <section class="section" aria-labelledby="rev-h">
+      <div class="section-head"><h2 id="rev-h">${t('Revenue')}</h2><a href="${href('/analytics')}">${t('Analytics')}</a></div>
+      <div class="metrics" aria-label="${t('Key figures')}">
+        <a class="metric" href="${href('/payments')}"><div class="metric-label">${t('Revenue this month')}</div><div class="metric-value">${fmtNumber(d.revenueThisMonth)}<small>${cur}</small></div></a>
+        <a class="metric" href="${href('/invoices')}"><div class="metric-label">${t('Pending')}</div><div class="metric-value">${fmtNumber(d.pending)}<small>${cur}</small></div></a>
+        <a class="metric" href="${href('/projects')}"><div class="metric-label">${t('Active projects')}</div><div class="metric-value" data-count="${d.active}" data-key="dash-active">${d.active}</div></a>
+        <a class="metric" href="${href('/projects?status=awaiting_approval')}"><div class="metric-label">${t('Awaiting approval')}</div><div class="metric-value">${d.awaitingApproval}</div></a>
+        <a class="metric${d.overdue ? ' alert' : ''}" href="${href('/invoices?status=overdue')}"><div class="metric-label">${t('Overdue')}</div><div class="metric-value">${d.overdue}</div></a>
+      </div>
+    </section>
   `;
 }

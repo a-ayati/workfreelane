@@ -56,13 +56,19 @@ export function recentActivity(limit = 12) {
 // ---------- Notifications ----------
 export function listNotifications() {
   const u = me();
-  return db.all('notifications', (n) => n.userId === u.id).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
+  return db.all('notifications', (n) => n.userId === u.id && !n.dismissedAt).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
 }
-export const unreadCount = () => { const u = me(); return db.count('notifications', (n) => n.userId === u.id && !n.readAt); };
+export const unreadCount = () => { const u = me(); return db.count('notifications', (n) => n.userId === u.id && !n.readAt && !n.dismissedAt); };
 export function markRead(id) {
   const n = db.get('notifications', id);
   if (!n || n.userId !== me().id) return;
   if (!n.readAt) db.update('notifications', id, { readAt: nowISO() });
+}
+export function dismissNotification(id) {
+  const n = db.get('notifications', id);
+  if (!n || n.userId !== me().id) return;
+  // Kept (not deleted) so time-based reminders are not re-created by the sweep.
+  db.update('notifications', id, { dismissedAt: nowISO(), readAt: n.readAt || nowISO() });
 }
 export function markAllRead() { listNotifications().filter((n) => !n.readAt).forEach((n) => db.update('notifications', n.id, { readAt: nowISO() })); }
 

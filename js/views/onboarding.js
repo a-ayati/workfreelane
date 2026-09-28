@@ -1,13 +1,13 @@
-import { html, raw, field, onAction, onForm, go, toast, href } from '../ui.js';
+import { html, raw, icon, field, onAction, onForm, go, href, checkBadge } from '../ui.js';
 import { auth } from '../core/auth.js';
 import { t } from '../core/i18n.js';
 import { UserError } from '../core/util.js';
-import { completeOnboarding } from '../services/core.js';
+import { completeOnboarding, MANAGE_OPTIONS } from '../services/core.js';
 import { DISCIPLINES, CURRENCIES } from '../services/constants.js';
 import { langSwitch } from './shell.js';
 
-const state = { step: 1, disciplines: [], services: '', currency: 'QAR', businessName: '', logo: '' };
-const TOTAL = 6;
+const state = { step: 1, disciplines: [], manage: [...MANAGE_OPTIONS], services: '', currency: 'QAR', businessName: '', logo: '' };
+const TOTAL = 7;
 
 export function resizeImage(file, max = 256) {
   return new Promise((resolve, reject) => {
@@ -36,33 +36,38 @@ export function onboarding() {
   const nav = (next = t('Continue'), skip = false) => html`<div class="form-actions" style="justify-content:space-between">
     ${s > 1 ? html`<button type="button" class="btn btn-ghost" data-action="onb-back">${t('Back')}</button>` : html`<span></span>`}
     <span class="btn-row">${skip ? html`<button type="button" class="btn btn-ghost" data-action="onb-skip">${t('Skip for now')}</button>` : ''}<button class="btn btn-primary" type="submit">${next}</button></span></div>`;
+  // One decision per screen, large type, tiles instead of dense forms.
+  const tiles = (name, type, options, selected, label) => html`<div class="tiles" role="${type === 'radio' ? 'radiogroup' : 'group'}" aria-label="${label}">${options.map(([v, l], i) => html`<label class="tile" style="animation-delay:${i * 30}ms"><input type="${type}" name="${name}" value="${v}"${selected.includes(v) ? raw(' checked') : ''}><span>${l}</span></label>`)}</div>`;
   let body;
-  if (s === 1) body = html`<h1>${t('What type of freelancer are you?')}</h1><p class="muted">${t('Choose all that apply.')}</p>
-    <form data-form="onb" class="form-stack"><div class="chips" role="group" aria-label="${t('Freelancer type')}">${DISCIPLINES.map((d) => html`<label class="chip"><input type="checkbox" name="disciplines[]" value="${d}"${state.disciplines.includes(d) ? raw(' checked') : ''}><span>${t(d)}</span></label>`)}</div>${nav()}</form>`;
-  if (s === 2) body = html`<h1>${t('What services do you offer?')}</h1><p class="muted">${t('One per line. These help pre-fill proposals.')}</p>
+  if (s === 1) body = html`<h1>${t('What do you do?')}</h1><p class="muted">${t('Choose all that apply.')}</p>
+    <form data-form="onb" class="form-stack">${tiles('disciplines[]', 'checkbox', DISCIPLINES.map((d) => [d, t(d)]), state.disciplines, t('Freelancer type'))}${nav()}</form>`;
+  if (s === 2) body = html`<h1>${t('What do you want to manage?')}</h1><p class="muted">${t('Everything is included — this just tells us where to start.')}</p>
+    <form data-form="onb" class="form-stack">${tiles('manage[]', 'checkbox', MANAGE_OPTIONS.map((m) => [m, t(m)]), state.manage, t('What do you want to manage?'))}${nav()}</form>`;
+  if (s === 3) body = html`<h1>${t('What services do you offer?')}</h1><p class="muted">${t('One per line. These help pre-fill proposals.')}</p>
     <form data-form="onb" class="form-stack">${field({ label: t('Services'), name: 'services', type: 'textarea', rows: 6, value: state.services, placeholder: t('Brand identity\nSocial media content\nPromotional videos') })}${nav(t('Continue'), true)}</form>`;
-  if (s === 3) body = html`<h1>${t('Which currency do you invoice in?')}</h1><p class="muted">${t('You can change this later in Settings.')}</p>
-    <form data-form="onb" class="form-stack"><div class="chips" role="radiogroup" aria-label="${t('Currency')}">${CURRENCIES.map((c) => html`<label class="chip"><input type="radio" name="currency" value="${c}"${state.currency === c ? raw(' checked') : ''}><span>${c}</span></label>`)}</div>${nav()}</form>`;
-  if (s === 4) body = html`<h1>${t("What's your business called?")}</h1><p class="muted">${t('Shown on proposals, contracts, invoices and your client portal.')}</p>
+  if (s === 4) body = html`<h1>${t('Which currency do you invoice in?')}</h1><p class="muted">${t('You can change this later in Settings.')}</p>
+    <form data-form="onb" class="form-stack">${tiles('currency', 'radio', CURRENCIES.map((c) => [c, c]), [state.currency], t('Currency'))}${nav()}</form>`;
+  if (s === 5) body = html`<h1>${t("What's your business called?")}</h1><p class="muted">${t('Shown on proposals, contracts, invoices and your client portal.')}</p>
     <form data-form="onb" class="form-stack">${field({ label: t('Business name'), name: 'businessName', value: state.businessName, required: true })}${nav()}</form>`;
-  if (s === 5) body = html`<h1>${t('Add a profile photo or logo')}</h1><p class="muted">${t('Optional. Square images work best.')}</p>
+  if (s === 6) body = html`<h1>${t('Add a profile photo or logo')}</h1><p class="muted">${t('Optional. Square images work best.')}</p>
     <form data-form="onb" class="form-stack">
       <div class="btn-row">${state.logo ? html`<img class="logo-preview" src="${state.logo}" alt="${t('Logo preview')}">` : html`<div class="logo-preview" aria-hidden="true"></div>`}
       <label class="btn btn-secondary">${t('Choose image')}<input type="file" accept="image/*" data-change="onb-logo" class="sr-only"></label>
       ${state.logo ? html`<button type="button" class="btn btn-ghost" data-action="onb-logo-clear">${t('Remove')}</button>` : ''}</div>
       ${nav(t('Finish setup'), true)}</form>`;
-  if (s === 6) body = html`<h1>${t("You're set up.")}</h1><p class="muted">${t('Create your first project now, or explore the dashboard first.')}</p>
-    <div class="form-actions" style="justify-content:flex-start;margin-top:28px"><a class="btn btn-primary btn-lg" href="${href('/projects/new')}">${t('+ Create first project')}</a><a class="btn btn-ghost btn-lg" href="${href('/dashboard')}">${t('Skip for now')}</a></div>`;
+  if (s === 7) body = html`<div class="onb-done">${checkBadge()}<h1>${t("Let's create your first project.")}</h1><p class="muted">${t('Your workspace is ready. A project holds the brief, proposal, contract, files, feedback and invoices in one place.')}</p>
+    <div class="form-actions" style="justify-content:flex-start;margin-top:28px"><a class="btn btn-primary btn-lg" href="${href('/projects/new')}">${t('Create Project')} ${icon('arrow', 18)}</a><a class="btn btn-ghost btn-lg" href="${href('/dashboard')}">${t('Skip for now')}</a></div></div>`;
   return html`<div class="onb"><div class="btn-row" style="justify-content:space-between;padding-bottom:32px"><a class="brand" href="${href('/')}" style="padding:0"><img src="assets/icon.svg" alt="">Scopewise</a>${langSwitch()}</div>${steps}${body}</div>`;
 }
 
 function advance(values) {
   const s = state.step;
   if (s === 1) { state.disciplines = values.disciplines || []; if (!state.disciplines.length) throw new UserError(t('Choose at least one option.')); }
-  if (s === 2) state.services = values.services || '';
-  if (s === 3) state.currency = values.currency || state.currency;
-  if (s === 4) { state.businessName = (values.businessName || '').trim(); if (!state.businessName) throw new UserError(t('Business name is required.'), 'businessName'); }
-  if (s === 5) { completeOnboarding(state); toast(t('Your workspace is ready.')); }
+  if (s === 2) { state.manage = values.manage || []; if (!state.manage.length) throw new UserError(t('Choose at least one option.')); }
+  if (s === 3) state.services = values.services || '';
+  if (s === 4) state.currency = values.currency || state.currency;
+  if (s === 5) { state.businessName = (values.businessName || '').trim(); if (!state.businessName) throw new UserError(t('Business name is required.'), 'businessName'); }
+  if (s === 6) completeOnboarding(state);
   state.step = Math.min(TOTAL, s + 1);
 }
 
