@@ -846,3 +846,6 @@ a.list-row:active { background: var(--surface-3); }
 [dir=rtl] .icon-dir { transform: scaleX(-1); }
 .num, [dir=ltr] { unicode-bidi: isolate; }
 .lang-btn { justify-content: flex-start; }
+/* Arabic headlines need a wider measure and more line-height than Latin. */
+:lang(ar) .lp-hero h1 { max-width: 15ch; line-height: 1.2; letter-spacing: 0; }
+:lang(ar) .lp-section h2 { max-width: 24ch; line-height: 1.3; letter-spacing: 0; }

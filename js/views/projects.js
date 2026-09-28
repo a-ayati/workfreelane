@@ -109,7 +109,7 @@ export function workspace(params) {
           <div><span>${t('Client')}</span><a href="${href(`/clients/${p.clientId}`)}">${c?.name}</a></div>
           <div><span>${t('Deadline')}</span>${p.deadline ? fmtDate(p.deadline) : '—'}</div>
           <div><span>${t('Total value')}</span>${moneyEl(f.total, p.currency)}</div>
-          <div><span>${t('Paid')}</span>${f.paidPct}%</div>
+          <div><span>${t('Paid::label')}</span>${f.paidPct}%</div>
           <div><span>${t('Revisions')}</span>${listRounds(p.id).length} / ${p.revisionsIncluded}</div>
           <div><span>${t('Client language')}</span>${c?.language === 'ar' ? 'العربية' : 'English'}</div>
         </div>
@@ -320,7 +320,7 @@ function invoicesTab(p) {
   const invs = listInvoices({ projectId: p.id });
   const f = financials(p);
   return html`<div class="pay-grid" style="margin-bottom:20px">
-      <div><span>${t('Total')}</span><b>${fmtMoney(f.total, p.currency)}</b></div><div><span>${t('Invoiced')}</span><b>${fmtMoney(f.invoiced, p.currency)}</b></div><div><span>${t('Paid')}</span><b>${fmtMoney(f.paid, p.currency)}</b></div></div>
+      <div><span>${t('Total')}</span><b>${fmtMoney(f.total, p.currency)}</b></div><div><span>${t('Invoiced')}</span><b>${fmtMoney(f.invoiced, p.currency)}</b></div><div><span>${t('Paid::label')}</span><b>${fmtMoney(f.paid, p.currency)}</b></div></div>
     <div class="btn-row" style="margin-bottom:16px">
       ${f.contracted && f.uninvoiced > 0.001 ? html`<button class="btn btn-primary btn-sm" data-action="invoice-final" data-id="${p.id}">${t('Invoice remaining {amount}', { amount: fmtMoney(f.uninvoiced, p.currency) })}</button>` : ''}
       <button class="btn btn-secondary btn-sm" data-action="invoice-custom" data-id="${p.id}">${icon('plus', 14)} ${t('Custom invoice')}</button>

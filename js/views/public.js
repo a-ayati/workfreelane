@@ -57,14 +57,16 @@ export function landing() {
     <section class="lp-section">
       <div class="lp-kicker">${t('The problem')}</div>
       <h2>${t("Freelancers shouldn't have to run their business across ten different tools.")}</h2>
-      <div class="tools">${['WhatsApp', 'Email', 'Google Drive', 'PDFs', 'Spreadsheets', 'Payment tools'].map((x) => html`<span>${t(x)}</span>`)}</div>
+      <div class="tools">${['WhatsApp', 'Email', 'Google Drive', 'PDFs', 'Spreadsheets', 'Payment tools'].map((x) => html`<span>${t(`${x}::tool`)}</span>`)}</div>
+      <p class="muted" style="font-size:18px;max-width:640px">${t('Every project moves from one tool to another. Information gets scattered, and follow-up gets harder.')}</p>
       <p class="serif" style="font-size:32px">${t('Bring it all together.')}</p>
+      <p class="muted" style="font-size:18px;max-width:640px">${t('From the first client conversation to the proposal, project management, feedback, approvals, invoices and getting paid.')}</p>
     </section>
     <section class="lp-section" id="how">
       <div class="lp-kicker">${t('How it works')}</div>
       <h2>${t('One workflow, from the first brief to the final payment.')}</h2>
       <div class="lp-flow">
-        ${[['Brief', 'Capture what the client needs.'], ['Proposal', 'Scope, timeline and price.'], ['Contract', 'Generated when accepted.'], ['Project', 'Drafts, feedback, revisions.'], ['Approval', 'Recorded sign-off.'], ['Payment', 'Deposit and final invoice.']].map(([b, s]) => html`<div><b>${t(b)}</b><span>${t(s)}</span></div>`)}
+        ${[['Brief', 'Capture what the client needs.'], ['Proposal', 'Scope, timeline and price.'], ['Contract', 'Generated when accepted.'], ['Project::stage', 'Drafts, feedback, revisions.'], ['Approval', 'Recorded sign-off.'], ['Payment', 'Deposit and final invoice.']].map(([b, s]) => html`<div><b>${t(b)}</b><span>${t(s)}</span></div>`)}
       </div>
     </section>
     <section class="lp-section">

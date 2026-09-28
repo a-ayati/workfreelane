@@ -84,8 +84,8 @@ export function dashboard() {
   const activity = recentActivity(8);
   const first = u.name.split(' ')[0];
   const activeCount = projects.filter((x) => x.status !== 'draft').length;
-  const lead = activeCount ? t(activeCount === 1 ? 'You have 1 active project.' : 'You have {n} active projects.', { n: activeCount }) : t('No active projects yet.');
-  const attn = acts.length ? ` ${t(acts.length === 1 ? '1 thing needs your attention.' : '{n} things need your attention.', { n: acts.length })}` : '';
+  const lead = activeCount ? t(activeCount === 1 ? 'You have 1 active project.' : activeCount === 2 ? 'You have 2 active projects.' : 'You have {n} active projects.', { n: activeCount }) : t('No active projects yet.');
+  const attn = acts.length ? ` ${t(acts.length === 1 ? '1 thing needs your attention.' : acts.length === 2 ? '2 things need your attention.' : '{n} things need your attention.', { n: acts.length })}` : '';
   return html`
     <header class="hello page-head-row" style="align-items:flex-end">
       <div>
@@ -98,7 +98,7 @@ export function dashboard() {
 
     <section aria-labelledby="att-h">
       <div class="section-head"><h2 id="att-h">${t('Needs your attention')}</h2></div>
-      ${acts.length ? html`<div class="attention">${acts.map((a) => html`<a class="att ${a.tone}" href="${href(a.link)}"><b>${a.text}</b><span class="sub">${a.sub}</span><span class="go">${a.cta || t('Open')} ${icon('arrow', 14)}</span></a>`)}</div>`
+      ${acts.length ? html`<div class="attention">${acts.map((a) => html`<a class="att ${a.tone}" href="${href(a.link)}"><b>${a.text}</b><span class="sub">${a.sub}</span><span class="go">${a.cta || t('Open::action')} ${icon('arrow', 14)}</span></a>`)}</div>`
         : html`<div class="notice">${t('Nothing urgent. Every project is moving — check the next steps below.')}</div>`}
     </section>
 

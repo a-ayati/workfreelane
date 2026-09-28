@@ -173,10 +173,10 @@ export function aiView() {
 // ---------------- Files index ----------------
 export function filesIndex() {
   const files = listAllFiles();
-  return html`${pageHead({ title: t('Files'), sub: t('Every file across your projects. Open a project to upload or manage versions.') })}
+  return html`${pageHead({ title: t('Files::nav'), sub: t('Every file across your projects. Open a project to upload or manage versions.') })}
     ${files.length ? html`<div class="list">${files.map((f) => html`<div class="file-row">${f.latest ? thumb(f.latest) : html`<div class="file-thumb">—</div>`}
       <div style="min-width:0"><div class="cell-title">${f.name}</div><div class="cell-sub">${db.get('projects', f.projectId)?.name} · ${folderName(f.folder)} · ${t('{n} version(s)', { n: f.versions.length })} · ${fmtBytes(f.latest?.size)}</div></div>
-      <div class="btn-row"><button class="icon-btn" data-action="file-view" data-id="${f.latest?.id}" aria-label="${t('Preview')}">${icon('eye', 16)}</button><a class="btn btn-ghost btn-sm" href="${href(`/projects/${f.projectId}/files?folder=${f.folder}`)}">${t('Open')}</a></div></div>`)}</div>`
+      <div class="btn-row"><button class="icon-btn" data-action="file-view" data-id="${f.latest?.id}" aria-label="${t('Preview')}">${icon('eye', 16)}</button><a class="btn btn-ghost btn-sm" href="${href(`/projects/${f.projectId}/files?folder=${f.folder}`)}">${t('Open::action')}</a></div></div>`)}</div>`
       : empty({ title: t('No files yet'), body: t('Upload drafts and deliverables from a project’s Files tab.'), cta: html`<a class="btn btn-primary" href="${href('/projects')}">${t('Go to projects')}</a>` })}`;
 }
 

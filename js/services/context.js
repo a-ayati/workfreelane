@@ -2,8 +2,8 @@
 import { db } from '../core/store.js';
 import { auth } from '../core/auth.js';
 import { planOf } from '../core/plans.js';
-import { t, tl } from '../core/i18n.js';
-import { ForbiddenError, NotFoundError, UserError, PlanLimitError, nowISO } from '../core/util.js';
+import { t, tl, lang } from '../core/i18n.js';
+import { ForbiddenError, NotFoundError, UserError, PlanLimitError, nowISO, currencyLabel, fmtNumber } from '../core/util.js';
 import { ACTIVE_STATUSES } from './constants.js';
 
 export function me() { return auth.requireUser(); }
@@ -86,7 +86,14 @@ export const systemActor = () => ({ type: 'system', name: 'Scopewise' });
 export function localVars(vars, lng) {
   if (!vars) return vars;
   const out = {};
-  Object.entries(vars).forEach(([k, v]) => { out[k] = k.endsWith('_t') && typeof v === 'string' ? (lng ? tl(lng, v) : t(v)) : v; });
+  const l = lng || lang();
+  Object.entries(vars).forEach(([k, v]) => {
+    if (k.endsWith('_t') && typeof v === 'string') out[k] = lng ? tl(lng, v) : t(v);
+    // Arabic reads amounts with grouping and the local currency label (e.g. 3,750 ر.ق).
+    else if (l === 'ar' && k === 'currency') out[k] = currencyLabel(v, 'ar');
+    else if (l === 'ar' && k === 'amount' && typeof v === 'number') out[k] = fmtNumber(v, 'ar');
+    else out[k] = v;
+  });
   return out;
 }
 

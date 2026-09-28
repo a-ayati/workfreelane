@@ -92,13 +92,13 @@ export async function seedDemo() {
     // 3) Restaurant Campaign — Arabic-speaking client; revision requested, 50% paid, overdue change-order invoice.
     at(16);
     const rest = createProject({ name: 'حملة المطعم', clientId: abc.id, type: 'Content Creation', deadline: iso(2), revisionsIncluded: 2, depositPercent: 50 });
-    saveBrief(rest.id, { objective: 'إطلاق قائمة الخريف الجديدة وزيادة حجوزات نهاية الأسبوع.', audience: 'روّاد المطاعم ومحبو الطعام في الدوحة، 20–45 عامًا', platforms: 'إنستغرام، تيك توك', tone: 'فاخر، دافئ، عصري', references: 'https://instagram.com/ — المجموعة المحفوظة "الخريف"', productionNeeds: 'الموقع (المطعم)، تنسيق الأطباق، الكاميرا، الإضاءة، المونتاج' });
+    saveBrief(rest.id, { objective: 'إطلاق قائمة الخريف الجديدة وزيادة حجوزات نهاية الأسبوع.', audience: 'روّاد المطاعم ومحبو الطعام في الدوحة، 20–45 عاماً', platforms: 'إنستغرام، تيك توك', tone: 'فاخر، دافئ، عصري', references: 'https://instagram.com/ — المجموعة المحفوظة "الخريف"', productionNeeds: 'الموقع (المطعم)، تنسيق الأطباق، الكاميرا، الإضاءة، المونتاج' });
     await proposalFor(rest, {
-      timeline: '14 يومًا', intro: 'شكرًا لثقتكم. فيما يلي نطاق العمل والجدول الزمني والتكلفة لحملة إطلاق قائمة الخريف.',
-      paymentTerms: '50% دفعة مقدمة لبدء العمل، و50% عند الموافقة النهائية قبل تسليم الملفات النهائية.',
+      timeline: '14 يوماً', intro: 'شكراً لثقتكم. يوضح هذا العرض نطاق العمل والجدول الزمني والتكلفة لحملة إطلاق قائمة الخريف.',
+      paymentTerms: '50% دفعة مقدّمة لبدء العمل، و50% عند الاعتماد النهائي وقبل تسليم الملفات النهائية.',
       items: [{ description: 'إنتاج محتوى الحملة', quantity: 1, unitPrice: 7500 }],
       deliverables: [{ title: 'ريلز (30 ثانية)', quantity: 3 }, { title: 'فيديو رئيسي (60 ثانية)', quantity: 1 }, { title: 'صور معدّلة', quantity: 10 }],
-      exclusions: ['تصوير إضافي', 'تعديلات إضافية', 'الإعلانات الممولة', 'الممثلون والمواهب', 'رسوم المواقع'],
+      exclusions: ['تصوير إضافي', 'جولات تعديل إضافية', 'الإعلانات المدفوعة', 'الممثلون والمواهب', 'رسوم المواقع'],
     });
     sendProposal(db.find('proposals', (x) => x.projectId === rest.id).id);
     at(15); portalViewProposal(rest.id, tokenOf(rest.id)); portalRespondProposal(rest.id, tokenOf(rest.id), { decision: 'accept', name: 'عمر حداد' });
@@ -111,9 +111,9 @@ export async function seedDemo() {
     at(6); const rf = await uploadFile(rest.id, { folder: 'drafts', file: art('Autumn Menu', 'Hero video storyboard · v01', '#3A2A1E') });
     await uploadFile(rest.id, { folder: 'drafts', file: art('Reel 01', 'Truffle risotto · v01', '#2F3B2A') });
     sendForReview(rf.file.id);
-    at(4); portalAddFeedback(rest.id, tokenOf(rest.id), { name: 'عمر حداد', comment: 'أرجو استبدال هذه اللقطة — تنسيق الطبق يبدو مستعجلًا.', fileVersionId: rf.version.id, pinX: 62, pinY: 40 });
-    portalAddFeedback(rest.id, tokenOf(rest.id), { name: 'عمر حداد', comment: 'يجب أن تبقى شارة الشعار في النهاية لمدة أطول.', fileVersionId: rf.version.id, reference: 'الإطار 12' });
-    at(4, 12); portalRequestRevision(rest.id, tokenOf(rest.id), { name: 'عمر حداد', summary: 'استبدال لقطة طبق الريزوتو، وإبقاء شارة الشعار في النهاية لمدة ثانيتين.' });
+    at(4); portalAddFeedback(rest.id, tokenOf(rest.id), { name: 'عمر حداد', comment: 'نرجو استبدال هذه اللقطة، فتنسيق الطبق يبدو مستعجلاً.', fileVersionId: rf.version.id, pinX: 62, pinY: 40 });
+    portalAddFeedback(rest.id, tokenOf(rest.id), { name: 'عمر حداد', comment: 'نرجو إطالة ظهور الشعار في نهاية الفيديو.', fileVersionId: rf.version.id, reference: 'الإطار 12' });
+    at(4, 12); portalRequestRevision(rest.id, tokenOf(rest.id), { name: 'عمر حداد', summary: 'استبدال لقطة طبق الريزوتو، وإطالة ظهور الشعار في النهاية إلى ثانيتين.' });
 
     // 4) Social Media Content — proposal sent, no response yet.
     at(5);

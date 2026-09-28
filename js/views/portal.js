@@ -95,7 +95,7 @@ function overview(ctx, todo) {
   return html`<div class="stack">
     ${todo.length ? todo.map((x, i) => html`<div class="cta-card${i === 0 && !x.done ? ' attention' : ''}"><div><div class="eyebrow" style="margin-bottom:4px">${x.done ? t('Ready') : i === 0 ? t('Needed from you') : t('Also waiting')}</div><h2>${x.title}</h2><p class="muted" style="margin:4px 0 0">${x.body}</p></div><a class="btn btn-primary btn-lg" href="${href(link(x.section))}">${x.cta} ${icon('arrow', 16)}</a></div>`)
       : html`<div class="cta-card"><h2>${t('Nothing needed from you right now')}</h2><p class="muted" style="margin:0">${t("We'll email you when there's something to review.")}</p></div>`}
-    ${f.contracted ? html`<div class="pay-grid"><div><span>${t('Project total')}</span><b>${fmtMoney(f.total, p.currency)}</b></div><div><span>${t('Paid')}</span><b>${fmtMoney(f.paid, p.currency)}</b></div><div><span>${t('Remaining')}</span><b>${fmtMoney(f.balance, p.currency)}</b></div></div>` : ''}
+    ${f.contracted ? html`<div class="pay-grid"><div><span>${t('Project total')}</span><b>${fmtMoney(f.total, p.currency)}</b></div><div><span>${t('Paid::label')}</span><b>${fmtMoney(f.paid, p.currency)}</b></div><div><span>${t('Remaining')}</span><b>${fmtMoney(f.balance, p.currency)}</b></div></div>` : ''}
     ${acts.length ? html`<div class="card"><h2 style="margin-bottom:8px">${t('Recent updates')}</h2><ul class="timeline">${acts.map((a) => html`<li><time>${fmtShortDate(a.createdAt)}</time><div>${activityText(a)}</div></li>`)}</ul></div>` : ''}
   </div>`;
 }

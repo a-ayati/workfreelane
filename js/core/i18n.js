@@ -19,9 +19,11 @@ function fill(str, vars) {
   return str.replace(/\{(\w+)\}/g, (m, k) => (k in vars && vars[k] != null ? String(vars[k]) : m));
 }
 
+// A key may carry a context suffix ('Open::action') so one English word can have
+// different translations; the suffix is dropped when falling back to English.
 export function tl(lang, str, vars) {
   const dict = DICTS[lang];
-  const s = dict && Object.prototype.hasOwnProperty.call(dict, str) ? dict[str] : str;
+  const s = dict && Object.prototype.hasOwnProperty.call(dict, str) ? dict[str] : str.replace(/::[a-z-]+$/, '');
   return fill(s, vars);
 }
 export const t = (str, vars) => tl(active, str, vars);

@@ -61,7 +61,7 @@ export function contractDoc(c, p) {
     <div class="doc-head">${bizHead(b)}<div class="small muted" style="text-align:end">${fmtDate(c.createdAt, undefined, L)}</div></div>
     <h1>${c.title}</h1>
     <p class="muted" style="margin-top:12px">${raw(T('Between {freelancer} (“the Freelancer”) and {client} (“the Client”), for the project “{project}”.', { freelancer: `<b>${escapeText(c.parties.freelancer)}</b>`, client: `<b>${escapeText(c.parties.client)}</b>`, project: escapeText(p.name) }))}</p>
-    ${c.sections.map((s, i) => html`<h2>${i + 1}. ${s.title}</h2><p class="prose">${s.body}</p>`)}
+    ${c.sections.map((s, i) => html`<h2><bdi>${i + 1}.</bdi> ${s.title}</h2><p class="prose">${s.body}</p>`)}
     <div class="notice" style="margin-top:32px">${c.disclaimer}</div>
     ${c.acceptedAt ? html`<div class="notice notice-ok" style="margin-top:12px">${T('✓ Accepted by {name} on {date} · fingerprint {fp}', { name: c.acceptedByName, date: fmtDateTime(c.acceptedAt, L), fp: c.fingerprint })}</div>` : ''}
   </article>`;
@@ -168,7 +168,7 @@ export function invoicesList(_, q) {
   const tot = totalsFor(all.filter((i) => !['draft', 'cancelled'].includes(i.status)));
   const cur = myBusiness().currency;
   return html`${pageHead({ title: t('Invoices'), sub: t('Deposit and final invoices are created from projects.') })}
-    <div class="pay-grid" style="margin-bottom:20px"><div><span>${t('Invoiced')}</span><b>${fmtMoney(tot.total, cur)}</b></div><div><span>${t('Paid')}</span><b>${fmtMoney(tot.paid, cur)}</b></div><div><span>${t('Outstanding')}</span><b>${fmtMoney(tot.balance, cur)}</b></div></div>
+    <div class="pay-grid" style="margin-bottom:20px"><div><span>${t('Invoiced')}</span><b>${fmtMoney(tot.total, cur)}</b></div><div><span>${t('Paid::label')}</span><b>${fmtMoney(tot.paid, cur)}</b></div><div><span>${t('Outstanding')}</span><b>${fmtMoney(tot.balance, cur)}</b></div></div>
     <nav class="filters">${[['', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['viewed', 'Viewed'], ['partially_paid', 'Partially Paid'], ['paid', 'Paid'], ['overdue', 'Overdue'], ['cancelled', 'Cancelled']].map(([id, l]) => html`<a href="${href(`/invoices${id ? `?status=${id}` : ''}`)}" class="${status === id ? 'active' : ''}">${t(l)}</a>`)}</nav>
     ${list.length ? html`<div class="list">${list.map((i) => invoiceRow(i))}</div>` : empty({ title: t('No invoices'), body: status ? t('No invoices with this status.') : t('Invoices appear here once a project reaches the deposit or final payment stage.') })}`;
 }

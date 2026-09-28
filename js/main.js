@@ -40,7 +40,7 @@ R('/contracts', 'app', contractsList, 'contracts', 'Contracts');
 R('/invoices', 'app', invoicesList, 'invoices', 'Invoices');
 R('/invoices/:id', 'app', invoiceDetail, 'invoices', 'Invoice');
 R('/payments', 'app', paymentsList, 'payments', 'Payments');
-R('/files', 'app', filesIndex, 'files', 'Files');
+R('/files', 'app', filesIndex, 'files', 'Files::nav');
 R('/portfolio', 'app', portfolioList, 'portfolio', 'Portfolio');
 R('/portfolio/preview', 'app', portfolioPreview, 'portfolio', 'Portfolio preview');
 R('/portfolio/:id', 'app', portfolioEdit, 'portfolio', 'Portfolio item');

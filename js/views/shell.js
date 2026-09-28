@@ -17,7 +17,7 @@ const NAV_MAIN = [
   ['contracts', 'Contracts', 'contract', '/contracts'],
   ['invoices', 'Invoices', 'invoice', '/invoices'],
   ['payments', 'Payments', 'wallet', '/payments'],
-  ['files', 'Files', 'files', '/files'],
+  ['files', 'Files::nav', 'files', '/files'],
 ];
 const NAV_GROW = [
   ['portfolio', 'Portfolio', 'star', '/portfolio'],

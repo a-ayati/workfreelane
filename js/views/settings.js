@@ -101,7 +101,7 @@ export function settingsView(params) {
 
 onForm({
   'settings-profile': (v) => { auth.updateUser({ name: v.name, email: v.email }); updateProfile({ title: v.title, phone: v.phone, disciplines: v.disciplines || [], services: v.services, bio: v.bio }); toast(t('Profile saved.')); },
-  'settings-language': (v) => { setUiLang(v.lang); auth.updateUser({ lang: v.lang }); toast(v.lang === 'ar' ? 'تم حفظ اللغة.' : 'Language saved.'); },
+  'settings-language': (v) => { setUiLang(v.lang); auth.updateUser({ lang: v.lang }); toast(v.lang === 'ar' ? 'تم تحديث لغة التطبيق.' : 'Language saved.'); },
   'settings-business': (v) => { updateBusiness(v); toast(t('Settings saved.')); },
   'settings-notifications': (v) => { updateBusiness({ notificationSettings: Object.fromEntries(Object.keys(NOTIFICATION_TYPES).map((k) => [k, !!v[k]])) }); toast(t('Notification settings saved.')); },
   'settings-contract': (v) => { updateBusiness({ [v.tpl === 'ar' ? 'contractSectionsAr' : 'contractSections']: v.sections || [] }); toast(t('Contract template saved. New contracts will use it.')); },

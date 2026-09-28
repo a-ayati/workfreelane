@@ -12,7 +12,7 @@ import { createInvoice } from '../services/billing.js';
 import { PROJECT_STATUSES } from '../services/constants.js';
 
 const KIND_ICON = { Project: 'folder', Client: 'users', Proposal: 'proposal', Invoice: 'invoice', File: 'files' };
-const KIND_GROUP = { Project: 'Projects', Client: 'Clients', Proposal: 'Proposals', Invoice: 'Invoices', File: 'Files' };
+const KIND_GROUP = { Project: 'Projects', Client: 'Clients', Proposal: 'Proposals', Invoice: 'Invoices', File: 'Files::nav' };
 const state = { open: false, q: '', sel: 0, mode: null, items: [] };
 
 const available = () => !!auth.currentUser() && !!maybeBusiness();
