@@ -61,15 +61,17 @@ export function portal(params, q) {
   const count = (s) => todo.filter((x) => x.section === s && !x.done).length || '';
   const current = portalLang(p.id);
   document.title = `${p.name} — ${b.name}`;
-  return html`<div class="portal">
+  const color = p.color || '#3B6FE0';
+  return html`<div class="portal in-project" style="--ctx:${color}">
+    <div class="atmo" aria-hidden="true"><span class="atmo-glow"></span><span class="atmo-icon">${icon(p.icon || 'folder', 420)}</span></div>
     ${preview ? html`<div class="portal-preview-bar">${t("You're previewing what {client} sees.", { client: c?.name })} <a href="${href(`/projects/${p.id}`)}">${t('Back to project')}</a></div>` : ''}
-    <header class="portal-top" style="border-top:3px solid ${b.brandColor || '#17150F'}"><div class="portal-top-inner">
+    <header class="portal-top" style="border-top:3px solid ${color}"><div class="portal-top-inner">
       <div class="portal-biz">${b.logo ? html`<img class="doc-logo" src="${b.logo}" alt="" style="width:32px;height:32px">` : ''}<span>${b.name}</span></div>
       <span class="btn-row"><span class="small muted hide-sm">${t('For {client}', { client: c?.company || c?.name })}</span>
         <button class="btn btn-ghost btn-sm" data-action="portal-lang" data-pid="${p.id}" data-lang="${current === 'ar' ? 'en' : 'ar'}" lang="${current === 'ar' ? 'en' : 'ar'}">${current === 'ar' ? 'English' : 'العربية'}</button></span></div></header>
     <div class="portal-main">
       <div class="eyebrow">${t(p.type)}</div>
-      <h1 style="margin-bottom:10px">${p.name}</h1>
+      <div class="btn-row" style="gap:12px;align-items:center;margin-bottom:10px"><span class="proj-icon" aria-hidden="true">${icon(p.icon || 'folder', 24)}</span><h1 style="margin:0" dir="auto">${p.name}</h1></div>
       <div class="btn-row" style="margin-bottom:24px">${pill(CLIENT_STATUS, p.status)}${p.deadline ? html`<span class="small muted">${t('Target date {date}', { date: fmtDate(p.deadline) })}</span>` : ''}</div>
       ${tabs(ALL.map(([id, l]) => [id, t(l), link(id), count(id)]), section)}
       ${views[section](ctx, todo)}

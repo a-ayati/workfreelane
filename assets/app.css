@@ -56,8 +56,8 @@
   --spring: cubic-bezier(.34, 1.4, .64, 1);
   --dur-1: 140ms; --dur-2: 240ms; --dur-3: 380ms;
 
-  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', ui-sans-serif, system-ui, sans-serif;
-  --display: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', ui-sans-serif, system-ui, sans-serif;
+  --sans: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'SF Pro Text', ui-sans-serif, system-ui, sans-serif;
+  --display: 'Inter', 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'SF Pro Display', ui-sans-serif, system-ui, sans-serif;
   --serif: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
   --sidebar: 256px;
 }
@@ -1099,3 +1099,9 @@ details.card > summary::-webkit-details-marker { display: none; }
 .demo-person span { display: flex; flex-direction: column; min-width: 0; }
 .demo-person small { color: var(--muted); font-size: 12.5px; }
 .demo-person > .icon { color: var(--muted); }
+
+/* Portal carries the project's identity. */
+.portal-main { position: relative; z-index: 1; }
+.portal .portal-top { z-index: 20; }
+.portal .cta-card.attention { box-shadow: var(--shadow-3), 0 0 0 1.5px var(--ctx); }
+.portal .cta-card.attention::before { background: linear-gradient(135deg, color-mix(in srgb, var(--ctx) 12%, transparent), transparent 60%); }
