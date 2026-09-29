@@ -8,7 +8,7 @@ import {
   me, myBusiness, requireWs, requireProject, orgRole, projectAccess, projectParties, workspacesOf, switchWorkspace,
   logActivity, freelancerActor, notify, ORG_ROLES, PROJECT_ROLES, ORG_TYPES, access,
 } from './context.js';
-import { insertWorkspace, PROJECT_COLORS, iconForType } from './core.js';
+import { insertWorkspace, updateClient, PROJECT_COLORS, iconForType } from './core.js';
 import { CURRENCIES } from './constants.js';
 
 // ---------- Migration (idempotent, runs at start) ----------
@@ -241,8 +241,7 @@ export function linkClientOrganization(clientId, businessId) {
   const b = requireWs('clients.manage');
   const c = db.get('clients', clientId);
   if (!c || c.businessId !== b.id) throw new ForbiddenError();
-  if (businessId && !db.get('businesses', businessId)) throw new UserError(t('That organization was not found.'));
-  return db.update('clients', clientId, { linkedBusinessId: businessId || null });
+  return updateClient(clientId, { ...c, linkedBusinessId: businessId || null });
 }
 
 export { projectAccess, auth };

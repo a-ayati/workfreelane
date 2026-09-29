@@ -2,8 +2,8 @@
 import { db } from '../core/store.js';
 import { auth } from '../core/auth.js';
 import { t } from '../core/i18n.js';
-import { UserError, req, opt, email as vEmail, int, money, dateStr, lines, randomToken, nowISO, todayISO, addDays, sum, round2, clock, fmtShortDate } from '../core/util.js';
-import { me, myBusiness, requireProject, requireOwned, logActivity, freelancerActor, assertCanActivateProject, projectAccess, requireWs, wsCan } from './context.js';
+import { UserError, ForbiddenError, req, opt, email as vEmail, int, money, dateStr, lines, randomToken, nowISO, todayISO, addDays, sum, round2, clock, fmtShortDate } from '../core/util.js';
+import { me, myBusiness, requireProject, requireOwned, logActivity, freelancerActor, assertCanActivateProject, projectAccess, requireWs, wsCan, orgRole } from './context.js';
 import { CURRENCIES, TEMPLATES, PROJECT_TYPES, DEFAULT_CONTRACT_SECTIONS, DEFAULT_CONTRACT_SECTIONS_AR, OPEN_STATUSES } from './constants.js';
 
 const sections = (rows) => rows.map(([title, body]) => ({ title, body }));
@@ -89,6 +89,12 @@ export function updateProfile(patch) {
 
 // ---------- Clients ----------
 function cleanClient(data) {
+  const linkedBusinessId = data.linkedBusinessId || null;
+  if (linkedBusinessId) {
+    const org = db.get('businesses', linkedBusinessId);
+    if (!org || org.kind !== 'organization') throw new UserError(t('That organization was not found.'), 'linkedBusinessId');
+    if (!orgRole(me(), linkedBusinessId)) throw new ForbiddenError(t("You don't have access to this organization."));
+  }
   return {
     name: req(data.name, 'Client name', 'name', 120),
     company: opt(data.company, 120),
@@ -97,6 +103,7 @@ function cleanClient(data) {
     country: opt(data.country, 80),
     notes: opt(data.notes, 5000),
     language: data.language === 'ar' ? 'ar' : 'en',
+    linkedBusinessId,
   };
 }
 export function listClients() {
@@ -111,7 +118,22 @@ export function createClient(data) {
   if (c.email && db.find('clients', (x) => x.businessId === b.id && x.email === c.email)) throw new UserError(t('A client with this email already exists.'), 'email');
   return db.insert('clients', { ...c, businessId: b.id, lastContactAt: null });
 }
-export function updateClient(id, data) { requireWs('clients.manage'); getClient(id); return db.update('clients', id, cleanClient(data)); }
+export function updateClient(id, data) {
+  requireWs('clients.manage');
+  const previous = getClient(id);
+  const clean = cleanClient(data);
+  const updated = db.update('clients', id, clean);
+  if (previous.linkedBusinessId !== updated.linkedBusinessId) {
+    const projects = db.all('projects', (p) => p.clientId === id);
+    const before = previous.linkedBusinessId ? db.get('businesses', previous.linkedBusinessId) : null;
+    const after = updated.linkedBusinessId ? db.get('businesses', updated.linkedBusinessId) : null;
+    // Explicit access granted through the former client organization must be
+    // revoked when the relationship changes. Independent invitations remain.
+    if (before) projects.forEach((p) => db.all('projectMembers', (m) => m.projectId === p.id && m.businessId === before.id && m.side === 'client').forEach((m) => db.remove('projectMembers', m.id)));
+    projects.forEach((p) => logActivity(p, freelancerActor(), 'organization.changed', 'Client organization changed from {old} to {new}', { old: before?.name || '—', new: after?.name || '—' }));
+  }
+  return updated;
+}
 export function deleteClient(id) {
   requireWs('clients.manage');
   getClient(id);

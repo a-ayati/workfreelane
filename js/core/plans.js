@@ -19,7 +19,7 @@ export const PLANS = {
     tagline: 'For creative studios',
     limits: { activeProjects: Infinity },
     features: { clientPortal: true, analytics: true, ai: true, automations: true, branding: true, team: true },
-    highlights: ['Everything in Pro', 'Team members (coming soon)', 'Team analytics (coming soon)', 'White-label portal (coming soon)'],
+    highlights: ['Everything in Pro', 'Team members, roles and project access', 'Team analytics (coming soon)', 'White-label portal (coming soon)'],
   },
 };
 // Note: the client portal is kept on Free in this MVP because the whole
