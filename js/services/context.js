@@ -209,6 +209,7 @@ export function portalGuard(p, cap) {
 
 // Language the client reads the portal, documents and emails in.
 export function clientLang(projectOrClient) {
+  if (projectOrClient?.clientId && ['ar', 'en'].includes(projectOrClient.language)) return projectOrClient.language;
   const c = projectOrClient?.clientId ? db.get('clients', projectOrClient.clientId) : projectOrClient;
   return c?.language === 'ar' ? 'ar' : 'en';
 }

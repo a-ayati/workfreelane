@@ -237,6 +237,9 @@ export function updateProject(id, data) {
   if ('budget' in data) clean.budget = money(data.budget || 0, 'Budget', 'budget');
   if ('lockDeliveryUntilPaid' in data) clean.lockDeliveryUntilPaid = !!data.lockDeliveryUntilPaid;
   if ('portalDisabled' in data) clean.portalDisabled = !!data.portalDisabled;
+  if ('language' in data) clean.language = ['ar', 'en'].includes(data.language) ? data.language : '';
+  if ('color' in data && PROJECT_COLORS.includes(data.color)) clean.color = data.color;
+  if ('altName' in data) clean.altName = opt(data.altName, 140);
   const locked = !['draft'].includes(p.status);
   if ('revisionsIncluded' in data) {
     const v = int(data.revisionsIncluded, 'Revision rounds', 'revisionsIncluded', 0, 20);

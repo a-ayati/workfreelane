@@ -6,7 +6,7 @@ import { fmtMoney, fmtDate, fmtShortDate, fmtDateTime, fmtRelative, UserError, N
 import { appLink } from '../core/mailer.js';
 import { runAI } from '../core/ai.js';
 import { me, myBusiness, activityText, access, can, wsCan, projectParties, orgRole, workspacesOf, switchWorkspace } from '../services/context.js';
-import { listProjects, getProject, createProject, updateProject, cancelProject, listClients, nextAction, financials, progress, listDeliverables, saveScope, latestProposal, regeneratePortalLink, isOverdue, proposalTotal } from '../services/core.js';
+import { PROJECT_COLORS, listProjects, getProject, createProject, updateProject, cancelProject, listClients, nextAction, financials, progress, listDeliverables, saveScope, latestProposal, regeneratePortalLink, isOverdue, proposalTotal } from '../services/core.js';
 import { getBrief, saveBrief, sendBrief, markBriefReviewed, createProposal, projectContract, updateContract, regenerateContract, listChangeOrders, createChangeOrder, withdrawChangeOrder } from '../services/workflow.js';
 import { listInvoices, createFinalInvoice, createInvoice, invoiceChangeOrder } from '../services/billing.js';
 import { projectActivity } from '../services/growth.js';
@@ -151,7 +151,7 @@ function providerWorkspace(p, acc, params) {
           <div><span>${t('Deadline')}</span>${p.deadline ? fmtDate(p.deadline) : '—'}</div>
           ${has('finance.view') ? html`<div><span>${t('Total value')}</span>${moneyEl(f.total, p.currency)}</div><div><span>${t('Paid::label')}</span>${f.paidPct}%</div>` : ''}
           <div><span>${t('Revisions')}</span>${listRounds(p.id).length} / ${p.revisionsIncluded}</div>
-          <div><span>${t('Client language')}</span>${c?.language === 'ar' ? 'العربية' : 'English'}</div>
+          <div><span>${t('Client language')}</span>${(p.language || c?.language) === 'ar' ? 'العربية' : 'English'}</div>
         </div>
       </div>
       <div class="btn-row">
@@ -442,7 +442,9 @@ function projectMenuModal(p) {
       ${field({ label: t('Type'), name: 'type', type: 'select', value: p.type, options: typeOptions() })}
       <label class="check full"><input type="checkbox" name="lockDeliveryUntilPaid" data-bool${p.lockDeliveryUntilPaid ? raw(' checked') : ''}> ${t('Hold final file downloads until the project is paid in full')}</label>
       <label class="check full"><input type="checkbox" name="portalDisabled" data-bool${p.portalDisabled ? raw(' checked') : ''}> ${t('Turn off the client portal for this project')}</label>
-      <p class="small muted full" style="margin:0">${t("The client's language is set on the client profile.")}</p>
+      ${field({ label: t('Project language'), name: 'language', type: 'select', value: p.language || '', options: [['', t('Same as the client profile')], ['en', 'English'], ['ar', 'العربية']], hint: t('Sets the language of the client portal, documents and emails for this project.') })}
+      ${field({ label: t('Name in the other language'), name: 'altName', value: p.altName || '', hint: t('Optional. Helps search find the project in both languages.') })}
+      <fieldset class="full field" style="border:0;padding:0;margin:0"><legend style="padding:0;margin-bottom:8px">${t('Project color')}</legend><div class="chips">${PROJECT_COLORS.map((col) => html`<label class="chip"><input type="radio" name="color" value="${col}"${(p.color || PROJECT_COLORS[0]) === col ? raw(' checked') : ''}><span style="display:inline-flex;align-items:center;gap:8px"><i style="width:14px;height:14px;border-radius:50%;background:${col};display:inline-block"></i></span></label>`)}</div></fieldset>
       <div class="form-actions full" style="justify-content:space-between">
         ${!['completed', 'cancelled'].includes(p.status) ? html`<button type="button" class="btn btn-ghost" style="color:var(--red)" data-action="project-cancel" data-id="${p.id}">${t('Cancel project')}</button>` : html`<span></span>`}
         <button class="btn btn-primary" type="submit">${t('Save')}</button></div>
