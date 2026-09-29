@@ -1124,11 +1124,12 @@ details.card > summary::-webkit-details-marker { display: none; }
 .guide-sec-head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
 .guide-sec-head h2 { margin: 0; font-size: clamp(22px, 3.4vw, 30px); }
 .guide-num { width: 44px; height: 44px; flex: none; border-radius: 14px; display: grid; place-items: center; background: var(--accent-soft, var(--fill)); color: var(--accent-mark, var(--ink)); }
-.guide-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.guide-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+.guide-card { display: flex; flex-direction: column; gap: 8px; padding: 20px; min-height: 148px; height: 100%; }
 .guide-card h3 { margin: 0 0 6px; font-size: 16px; }
 .guide-card p { margin: 0; color: var(--muted); line-height: 1.7; font-size: 14.5px; }
 .guide-end { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-@media (max-width: 600px) { .guide-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .guide-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .guide-grid { grid-template-columns: 1fr; } .guide-card { min-height: 0; } }
 .main-col .guide-toc { top: 76px; }
 .main-col .guide-sec { scroll-margin-top: 150px; }
-.guide-card { align-self: start; }
