@@ -4,7 +4,7 @@ import { db } from '../core/store.js';
 import { t } from '../core/i18n.js';
 import { fmtMoney, fmtDate, fmtShortDate, fmtRelative } from '../core/util.js';
 import { runAI } from '../core/ai.js';
-import { myBusiness, me } from '../services/context.js';
+import { myBusiness, me, workspacesOf } from '../services/context.js';
 import { listClients, getClient, createClient, updateClient, deleteClient, clientStats } from '../services/core.js';
 import { listReminders, completeReminder, deleteReminder } from '../services/delivery.js';
 import { PROJECT_STATUSES } from '../services/constants.js';
@@ -14,8 +14,8 @@ export function clientsList() {
   const cur = myBusiness().currency;
   return html`${pageHead({ title: t('Clients'), sub: t('Everyone you work with, with revenue and history.'), actions: html`<button class="btn btn-primary" data-action="client-new">${icon('plus', 16)} ${t('Add Client')}</button>` })}
     ${clients.length ? html`<div class="list"><div class="list-row list-head cols-5"><div>${t('Client')}</div><div>${t('Last project')}</div><div>${t('Revenue')}</div><div>${t('Outstanding')}</div><div class="right">${t('Last contact')}</div></div>
-      ${clients.map((c) => { const s = clientStats(c.id); return html`<a class="list-row cols-5" href="${href(`/clients/${c.id}`)}">
-        <div class="btn-row" style="flex-wrap:nowrap;min-width:0">${avatar(c.name)}<div style="min-width:0"><div class="cell-title">${c.name}</div><div class="cell-sub">${c.company || c.email || '—'}</div></div></div>
+      ${clients.map((c) => { const s = clientStats(c.id); const org = c.linkedBusinessId ? db.get('businesses', c.linkedBusinessId) : null; return html`<a class="list-row cols-5" href="${href(`/clients/${c.id}`)}">
+        <div class="btn-row" style="flex-wrap:nowrap;min-width:0">${avatar(c.name)}<div style="min-width:0"><div class="cell-title">${c.name}</div><div class="cell-sub">${org?.name || c.company || c.email || '—'}</div></div></div>
         <div class="hide-sm cell-sub">${s.lastProject?.name || '—'}</div><div class="hide-sm num">${fmtMoney(s.revenue, cur)}</div><div class="hide-sm num ${s.outstanding > 0 ? '' : 'muted'}">${fmtMoney(s.outstanding, cur)}</div>
         <div class="right cell-sub">${c.lastContactAt ? fmtRelative(c.lastContactAt) : '—'}</div></a>`; })}</div>`
       : empty({ title: t('No clients yet'), body: t('Your client list will grow as you create projects.'), cta: html`<button class="btn btn-primary" data-action="client-new">${t('Add Client')}</button>` })}`;
@@ -23,11 +23,12 @@ export function clientsList() {
 
 export function clientDetail(params) {
   const c = getClient(params.id);
+  const linkedOrg = c.linkedBusinessId ? db.get('businesses', c.linkedBusinessId) : null;
   const s = clientStats(c.id);
   const cur = myBusiness().currency;
   const reminders = listReminders({ open: false }).filter((r) => r.clientId === c.id);
   const projects = s.projects.sort((a, z) => z.createdAt.localeCompare(a.createdAt));
-  return html`${pageHead({ title: c.name, sub: [c.company, c.country].filter(Boolean).join(' · '), back: ['/clients', t('Clients')], actions: html`<a class="btn btn-primary" href="${href(`/projects/new?client=${c.id}`)}">${icon('plus', 16)} ${t('New project')}</a><button class="btn btn-secondary" data-action="client-edit" data-id="${c.id}">${t('Edit')}</button>` })}
+  return html`${pageHead({ title: c.name, sub: [linkedOrg?.name || c.company, c.country].filter(Boolean).join(' · '), back: ['/clients', t('Clients')], actions: html`<a class="btn btn-primary" href="${href(`/projects/new?client=${c.id}`)}">${icon('plus', 16)} ${t('New project')}</a><button class="btn btn-secondary" data-action="client-edit" data-id="${c.id}">${t('Edit')}</button>` })}
     <div class="pay-grid" style="margin-bottom:24px"><div><span>${t('Total revenue')}</span><b>${fmtMoney(s.revenue, cur)}</b></div><div><span>${t('Outstanding')}</span><b>${fmtMoney(s.outstanding, cur)}</b></div><div><span>${t('Projects')}</span><b>${projects.length}</b></div></div>
     <div class="grid-main">
       <div class="stack">
@@ -50,10 +51,12 @@ export function clientDetail(params) {
 }
 
 function clientForm(c = {}) {
+  const orgs = workspacesOf(me()).filter((w) => w.kind === 'organization' && w.id !== myBusiness().id);
   return html`${modalHead(c.id ? t('Edit client') : t('Add client'))}
     <form class="form-grid" data-form="client-save"><input type="hidden" name="id" value="${c.id || ''}">
       ${field({ label: t('Name'), name: 'name', value: c.name, required: true, attrs: 'autofocus' })}
       ${field({ label: t('Company'), name: 'company', value: c.company })}
+      ${field({ label: t('Client organization (optional)'), name: 'linkedBusinessId', type: 'select', value: c.linkedBusinessId || '', options: [['', t('Individual or external client')], ...orgs.map((w) => [w.id, w.name])], hint: t('Members of the linked organization can access this client’s shared projects according to their project roles.'), full: true })}
       ${field({ label: t('Email'), name: 'email', type: 'email', value: c.email, attrs: 'dir="ltr"' })}
       ${field({ label: t('Phone'), name: 'phone', type: 'tel', value: c.phone, attrs: 'dir="ltr"' })}
       ${field({ label: t('Country'), name: 'country', value: c.country })}
