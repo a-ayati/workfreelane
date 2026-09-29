@@ -1133,3 +1133,4 @@ details.card > summary::-webkit-details-marker { display: none; }
 @media (max-width: 600px) { .guide-grid { grid-template-columns: 1fr; } .guide-card { min-height: 0; } }
 .main-col .guide-toc { top: 76px; }
 .main-col .guide-sec { scroll-margin-top: 150px; }
+.guide-grid > .card + .card, .guide-grid > .guide-card { margin-top: 0; }
