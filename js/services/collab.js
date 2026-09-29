@@ -3,7 +3,7 @@
 import { db } from '../core/store.js';
 import { t } from '../core/i18n.js';
 import { UserError, ForbiddenError, req, opt, dateStr, nowISO } from '../core/util.js';
-import { me, requireProject, projectAccess, access, logActivity, notify, projectParties } from './context.js';
+import { me, requireProject, projectAccess, access, logActivity, notify, projectParties, portalProject } from './context.js';
 
 const actorOrg = (p) => projectParties(p).find((x) => x.side === access(p)?.side)?.name || '';
 
@@ -92,4 +92,30 @@ export function deleteEvent(id) {
 }
 export function listEvents(p, side) {
   return db.all('events', (e) => e.projectId === p.id && (e.shared || e.side === side));
+}
+
+// ---------- Client portal (secret link, no account) ----------
+export function portalMessages(pid, token) {
+  const p = portalProject(pid, token);
+  return db.all('messages', (m) => m.projectId === p.id).sort((a, z) => a.createdAt.localeCompare(z.createdAt));
+}
+export function portalPostMessage(pid, token, { name, body }) {
+  const p = portalProject(pid, token);
+  const c = db.get('clients', p.clientId);
+  const author = opt(name, 80) || c?.name || t('Client');
+  const text = req(body, 'Message', 'body', 4000);
+  const m = db.insert('messages', { projectId: p.id, userId: null, authorName: author, side: 'client', org: c?.company || '', body: text });
+  notify(p, { type: 'message', title: '{name} sent you a message', body: '{text}', vars: { name: author, text: text.slice(0, 140) }, link: `/projects/${p.id}/messages` });
+  return m;
+}
+export function portalEvents(pid, token) {
+  const p = portalProject(pid, token);
+  return db.all('events', (e) => e.projectId === p.id && e.shared !== false).sort((a, z) => `${a.date} ${a.time}`.localeCompare(`${z.date} ${z.time}`));
+}
+export function portalTeam(pid, token) {
+  const p = portalProject(pid, token);
+  const biz = db.get('businesses', p.businessId);
+  const c = db.get('clients', p.clientId);
+  const people = db.all('projectMembers', (m) => m.projectId === p.id && m.status !== 'invited').map((m) => ({ name: m.name || db.get('users', m.userId)?.name || '', role: m.role, side: m.side }));
+  return { provider: biz?.name || '', client: c?.company || c?.name || '', people: people.filter((x) => x.name) };
 }

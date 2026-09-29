@@ -14,6 +14,8 @@ import { PAYMENT_METHODS } from '../core/payments.js';
 import { INVOICE_STATUSES, CO_STATUSES, FOLDERS } from '../services/constants.js';
 import { proposalDoc, contractDoc, invoiceDoc } from './documents.js';
 import { thumb, openViewer, download, verLabel, conversation } from './viewer.js';
+import { portalMessages, portalPostMessage, portalEvents, portalTeam } from '../services/collab.js';
+import { projectRoleLabel } from '../services/org.js';
 
 const CLIENT_STATUS = {
   draft: { label: 'Getting started', tone: 'neutral' }, awaiting_deposit: { label: 'Awaiting deposit', tone: 'amber' }, active: { label: 'In progress', tone: 'green' },
@@ -26,6 +28,7 @@ const may = (ctx, cap) => !ctx.acc || ctx.acc.caps.has(cap);
 const SECTION_CAP = { overview: 'project.view', brief: 'brief.view', proposal: 'proposal.view', contract: 'contract.view', scope: 'scope.view', files: 'files.view', feedback: 'feedback.view', revisions: 'revisions.view', approval: 'approvals.view', invoice: 'finance.view' };
 const plink = (pid, tk, s = '') => (tk ? `/client/${pid}${s ? `/${s}` : ''}?t=${tk}` : `/projects/${pid}${s ? `/${s}` : ''}`);
 const SECTIONS = [['overview', 'Overview'], ['brief', 'Brief'], ['proposal', 'Proposal'], ['contract', 'Contract'], ['scope', 'Scope'], ['files', 'Files'], ['feedback', 'Feedback'], ['revisions', 'Revisions'], ['approval', 'Approval'], ['invoice', 'Invoices']];
+const GUEST_EXTRA = [['messages', 'Messages'], ['calendar', 'Calendar'], ['team', 'Team'], ['activity', 'Activity']];
 let rememberedName = '';
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -47,13 +50,14 @@ export function portal(params, q) {
   const p = portalProject(params.pid, token); // throws a friendly error on bad links
   const b = db.get('businesses', p.businessId);
   const c = db.get('clients', p.clientId);
-  const section = SECTIONS.some(([id]) => id === params.section) ? params.section : 'overview';
+  const ALL = [...SECTIONS, ...GUEST_EXTRA];
+  const section = ALL.some(([id]) => id === params.section) ? params.section : 'overview';
   const link = (s) => `/client/${p.id}/${s}?t=${token}`;
   const ctx = { p, b, c, token, link, name: getName(p.id) || c?.name || '' };
   const todo = todos(ctx);
   const user = auth.currentUser();
   const preview = user && canAccessProject(user, p);
-  const views = { overview, brief, proposal, contract, scope, files, feedback, revisions, approval, invoice };
+  const views = { overview, brief, proposal, contract, scope, files, feedback, revisions, approval, invoice, messages: guestMessages, calendar: guestCalendar, team: guestTeam, activity: guestActivity };
   const count = (s) => todo.filter((x) => x.section === s && !x.done).length || '';
   const current = portalLang(p.id);
   document.title = `${p.name} — ${b.name}`;
@@ -67,7 +71,7 @@ export function portal(params, q) {
       <div class="eyebrow">${t(p.type)}</div>
       <h1 style="margin-bottom:10px">${p.name}</h1>
       <div class="btn-row" style="margin-bottom:24px">${pill(CLIENT_STATUS, p.status)}${p.deadline ? html`<span class="small muted">${t('Target date {date}', { date: fmtDate(p.deadline) })}</span>` : ''}</div>
-      ${tabs(SECTIONS.map(([id, l]) => [id, t(l), link(id), count(id)]), section)}
+      ${tabs(ALL.map(([id, l]) => [id, t(l), link(id), count(id)]), section)}
       ${views[section](ctx, todo)}
     </div></div>`;
 }
@@ -346,3 +350,44 @@ onAction({
   'portal-lang': (el) => { store.set(`sw.portal.lang.${el.dataset.pid}`, el.dataset.lang); },
 });
 export { fileKind };
+
+
+// ---------------- Extra sections for guests (secure link) ----------------
+const timeOf = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+const dayOf = (iso) => fmtDate(iso);
+function guestActivity(ctx) {
+  const { p } = ctx;
+  const acts = db.all('activityLogs', (a) => a.projectId === p.id && !/^(invoice|payment|deposit)\./.test(a.action) || (a.projectId === p.id && may(ctx, 'finance.view'))).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
+  if (!acts.length) return empty({ title: t('No activity yet.'), body: t('A permanent record of every important action on this project. Entries cannot be edited or deleted.') });
+  const days = new Map();
+  acts.forEach((a) => { const k = a.createdAt.slice(0, 10); (days.get(k) || days.set(k, []).get(k)).push(a); });
+  return html`<ol class="tl" aria-label="${t('Activity')}">${[...days.entries()].map(([day, items]) => html`<li class="tl-day"><h3 class="tl-date">${dayOf(day)}</h3><ol>${items.map((a) => html`<li class="tl-item"><time datetime="${a.createdAt}">${timeOf(a.createdAt)}</time><span class="tl-dot" aria-hidden="true">${icon('clock', 14)}</span><div class="tl-body"><div>${activityText(a)}</div>${a.actorName ? html`<div class="who">${a.actorName}${a.actorOrg ? ` · ${a.actorOrg}` : ''}</div>` : ''}</div></li>`)}</ol></li>`)}</ol>`;
+}
+function guestCalendar(ctx) {
+  const { p, token } = ctx;
+  const items = [];
+  if (p.deadline) items.push({ date: p.deadline, title: t('Delivery due'), icon: 'flag' });
+  const prop = portalProposal(p.id, token);
+  if (prop && ['sent', 'viewed'].includes(prop.status) && prop.validUntil) items.push({ date: prop.validUntil, title: t('Proposal response due'), icon: 'proposal' });
+  if (may(ctx, 'finance.view')) portalInvoices(p.id, token).filter((i) => ['sent', 'viewed', 'partially_paid', 'overdue'].includes(i.status) && i.dueDate).forEach((i) => items.push({ date: i.dueDate, title: t('Invoice {number} due', { number: i.number }), icon: 'invoice' }));
+  portalEvents(p.id, token).forEach((e) => items.push({ date: e.date, time: e.time, title: e.title, icon: e.type === 'milestone' ? 'flag' : 'calendar' }));
+  items.sort((a, z) => `${a.date} ${a.time || ''}`.localeCompare(`${z.date} ${z.time || ''}`));
+  if (!items.length) return empty({ title: t('Nothing coming up'), body: t('Deadlines, reviews, invoices and meetings appear here automatically.') });
+  return html`<div class="card"><ul class="people">${items.map((e) => html`<li><span class="org-mark" style="color:${p.color || 'inherit'}">${icon(e.icon || 'calendar', 18)}</span><div class="person"><b>${e.title}</b><span>${fmtDate(e.date)}${e.time ? ` · ${e.time}` : ''}</span></div></li>`)}</ul></div>`;
+}
+function guestTeam(ctx) {
+  const { p, token } = ctx;
+  const tm = portalTeam(p.id, token);
+  const group = (side, title) => { const ps = tm.people.filter((x) => x.side === side); return html`<section class="card"><h2 style="margin-bottom:10px">${title}</h2>${ps.length ? html`<ul class="people">${ps.map((x) => html`<li><div class="person"><b>${x.name}</b><span>${t(projectRoleLabel(x.role))}</span></div></li>`)}</ul>` : html`<p class="muted small" style="margin:0">${t('No members yet')}</p>`}</section>`; };
+  return html`<div class="teams">${group('provider', tm.provider)}${group('client', tm.client)}</div>`;
+}
+function guestMessages(ctx) {
+  const { p, token, name } = ctx;
+  const list = portalMessages(p.id, token);
+  return html`<div class="chat card"><div class="chat-log" aria-live="polite">${list.length ? list.map((m) => html`<div class="bubble-row${m.side === 'client' ? ' me' : ''}"><div class="bubble${m.side === 'client' ? ' mine' : ''}"><div class="meta"><b>${m.authorName}</b>${m.org ? html`<span>${m.org}</span>` : ''}<time datetime="${m.createdAt}">${fmtRelative(m.createdAt)}</time></div><div class="prose" dir="auto">${m.body}</div></div></div>`)
+      : html`<div class="chat-empty">${icon('chat', 28)}<p>${t('Start the conversation. Everyone on this project can read and reply.')}</p></div>`}</div>
+    <form class="chat-compose" data-form="portal-msg"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}"><input type="hidden" name="name" value="${name || ''}">
+      <textarea name="body" rows="1" required placeholder="${t('Write a message…')}" aria-label="${t('Message')}" data-autogrow></textarea>
+      <button class="btn btn-primary" type="submit">${icon('arrow', 16)}<span class="sr-only">${t('Send message')}</span></button></form></div>`;
+}
+onForm({ 'portal-msg': (v) => { portalPostMessage(v.pid, v.t, { name: v.name, body: v.body }); } });
