@@ -4,38 +4,40 @@ import { db } from '../core/store.js';
 import { t } from '../core/i18n.js';
 import { humanError } from '../core/util.js';
 import { auth } from '../core/auth.js';
-import { maybeBusiness } from '../services/context.js';
+import { maybeBusiness, wsCan } from '../services/context.js';
 import { search } from '../services/growth.js';
 import { listProjects, acceptedProposal } from '../services/core.js';
 import { createProposal } from '../services/workflow.js';
 import { createInvoice } from '../services/billing.js';
 import { PROJECT_STATUSES } from '../services/constants.js';
 
-const KIND_ICON = { Project: 'folder', Client: 'users', Proposal: 'proposal', Invoice: 'invoice', File: 'files' };
-const KIND_GROUP = { Project: 'Projects', Client: 'Clients', Proposal: 'Proposals', Invoice: 'Invoices', File: 'Files::nav' };
+const KIND_ICON = { Project: 'folder', Client: 'users', Proposal: 'proposal', Invoice: 'invoice', File: 'files', Organization: 'building', Person: 'users', Contract: 'contract', Message: 'chat' };
+const KIND_GROUP = { Project: 'Projects', Client: 'Clients', Proposal: 'Proposals', Invoice: 'Invoices', File: 'Files::nav', Organization: 'Organizations', Person: 'People', Contract: 'Contracts', Message: 'Messages' };
 const state = { open: false, q: '', sel: 0, mode: null, items: [] };
 
 const available = () => !!auth.currentUser() && !!maybeBusiness();
 
 function actions() {
   return [
-    { id: 'new-project', icon: 'plus', label: t('New Project'), run: () => go('/projects/new') },
-    { id: 'add-client', icon: 'users', label: t('Add Client'), run: () => { go('/clients'); setTimeout(() => runAction('client-new'), 60); } },
-    { id: 'new-proposal', icon: 'proposal', label: t('New Proposal'), sub: t('Choose a project'), pick: 'proposal' },
-    { id: 'new-invoice', icon: 'invoice', label: t('New Invoice'), sub: t('Choose a project'), pick: 'invoice' },
+    wsCan('projects.create') && { id: 'new-project', icon: 'plus', label: t('New Project'), run: () => go('/projects/new') },
+    wsCan('members.manage') && maybeBusiness()?.kind === 'organization' && { id: 'add-member', icon: 'users', label: t('Add Member'), run: () => { go('/organization'); setTimeout(() => runAction('org-invite'), 60); } },
+    wsCan('clients.manage') && { id: 'add-client', icon: 'users', label: t('Add Client'), run: () => { go('/clients'); setTimeout(() => runAction('client-new'), 60); } },
+    wsCan('proposal.view') && { id: 'new-proposal', icon: 'proposal', label: t('New Proposal'), sub: t('Choose a project'), pick: 'proposal' },
+    wsCan('finance.manage') && { id: 'new-invoice', icon: 'invoice', label: t('New Invoice'), sub: t('Choose a project'), pick: 'invoice' },
     { id: 'upload', icon: 'upload', label: t('Upload File'), sub: t('Choose a project'), pick: 'upload' },
-  ];
+    { id: 'add-org', icon: 'building', label: t('Add Organization'), run: () => go('/organization?new=1') },
+  ].filter(Boolean);
 }
 function goTo() {
   return [
-    ['Dashboard', 'home', '/dashboard'], ['Projects', 'folder', '/projects'], ['Clients', 'users', '/clients'], ['Invoices', 'invoice', '/invoices'],
+    ['Dashboard', 'home', '/dashboard'], ['Calendar', 'calendar', '/calendar'], ['Projects', 'folder', '/projects'], ['Organization', 'building', '/organization'],
     ['Notifications', 'bell', '/notifications'], ['Settings', 'settings', '/settings'],
   ].map(([l, ic, link]) => ({ id: 'go' + link, icon: ic, label: t(l), run: () => go(link) }));
 }
 
 function projectsFor(mode, q) {
   const term = q.trim().toLowerCase();
-  return listProjects({}).filter((p) => {
+  return listProjects({ includeShared: mode === 'upload' }).filter((p) => {
     if (term && !`${p.name} ${db.get('clients', p.clientId)?.name}`.toLowerCase().includes(term)) return false;
     if (mode === 'proposal') return p.status === 'draft' && !acceptedProposal(p.id) && !db.find('proposals', (x) => x.projectId === p.id && ['draft', 'sent', 'viewed'].includes(x.status));
     if (mode === 'invoice') return !!acceptedProposal(p.id) && p.status !== 'cancelled';
@@ -106,7 +108,7 @@ export function openCommand(initial = '') {
   const root = document.getElementById('cmd-root');
   root.innerHTML = String(html`<div class="cmd-backdrop" data-cmd-close></div>
     <div class="cmd" role="dialog" aria-modal="true" aria-label="${t('Command center')}">
-      <div class="cmd-input">${icon('search', 20)}<input id="cmd-input" role="combobox" aria-expanded="true" aria-controls="cmd-list" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="${t('Search projects, clients, invoices…')}" value="${initial}"><kbd>Esc</kbd></div>
+      <div class="cmd-input">${icon('search', 20)}<input id="cmd-input" role="combobox" aria-expanded="true" aria-controls="cmd-list" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="${t('Search projects, organizations, invoices…')}" value="${initial}"><kbd>Esc</kbd></div>
       <div class="cmd-list" id="cmd-list" role="listbox"></div>
       <div class="cmd-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> ${t('to navigate')}</span><span><kbd>↵</kbd> ${t('to open')}</span><span><kbd>Esc</kbd> ${t('to close')}</span></div>
     </div>`);
@@ -132,7 +134,7 @@ document.addEventListener('keydown', (e) => {
   if (!state.open) return;
   if (e.key === 'Escape') {
     e.preventDefault(); e.stopPropagation();
-    if (state.mode) { state.mode = null; state.q = ''; const input = document.getElementById('cmd-input'); input.value = ''; input.placeholder = t('Search projects, clients, invoices…'); renderList(); } else closeCommand();
+    if (state.mode) { state.mode = null; state.q = ''; const input = document.getElementById('cmd-input'); input.value = ''; input.placeholder = t('Search projects, organizations, invoices…'); renderList(); } else closeCommand();
   } else if (e.key === 'ArrowDown') { e.preventDefault(); select(1); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); select(-1); }
   else if (e.key === 'Enter') { e.preventDefault(); activate(state.sel); }

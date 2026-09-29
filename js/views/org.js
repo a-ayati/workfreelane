@@ -15,7 +15,7 @@ const ROLE_HELP = {
 export function organizationView(_, q) {
   if (q.switch && workspacesOf(me()).some((w) => w.id === q.switch)) { switchWorkspace(q.switch); go('/organization'); return html``; }
   const b = myBusiness();
-  if (b.kind !== 'organization') return personalWorkspace(b);
+  if (b.kind !== 'organization' || q.new) return personalWorkspace(b);
   const manage = wsCan('members.manage');
   const members = listMembers(b.id);
   const teams = listTeams(b.id);
@@ -53,7 +53,7 @@ export function organizationView(_, q) {
 
 function personalWorkspace(b) {
   const orgs = workspacesOf(me()).filter((w) => w.kind === 'organization');
-  return html`${pageHead({ eyebrow: t('Personal workspace'), title: t('Organizations'), sub: t('Work with a team, or collaborate as a company with other organizations on shared projects.') })}
+  return html`${pageHead({ eyebrow: b.kind === 'organization' ? b.name : t('Personal workspace'), title: t('Organizations'), sub: t('Work with a team, or collaborate as a company with other organizations on shared projects.') })}
     <div class="grid-main">
       <div class="stack">
         ${orgs.length ? html`<section class="card"><h2 style="margin-bottom:10px">${t('Your organizations')}</h2><div class="list">${orgs.map((o) => html`<a class="list-row" style="grid-template-columns:auto minmax(0,1fr) auto" href="${href(`/organization?switch=${o.id}`)}"><span class="org-mark">${icon('building', 18)}</span><div><div class="cell-title">${o.name}</div><div class="cell-sub">${t(o.orgType || 'Organization')} · ${t(roleLabel(orgRole(me(), o.id)))}</div></div>${icon('arrow', 16)}</a>`)}</div></section>`

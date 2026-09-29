@@ -7,7 +7,7 @@ import { t, lang, setUiLang } from '../core/i18n.js';
 import { aiConfig, CLAUDE_MODEL } from '../core/ai.js';
 import { PLANS } from '../core/plans.js';
 import { UserError, lines } from '../core/util.js';
-import { me, myBusiness, subscription } from '../services/context.js';
+import { me, myBusiness, subscription, wsCan } from '../services/context.js';
 import { updateBusiness, myProfile, updateProfile, contractTemplateFor } from '../services/core.js';
 import { CURRENCIES, DISCIPLINES, NOTIFICATION_TYPES, TEMPLATES, DEFAULT_CONTRACT_SECTIONS, DEFAULT_CONTRACT_SECTIONS_AR, CONTRACT_DISCLAIMER } from '../services/constants.js';
 import { resizeImage } from './onboarding.js';
@@ -15,7 +15,9 @@ import { resizeImage } from './onboarding.js';
 const SECTIONS = [['profile', 'Profile'], ['language', 'Language'], ['appearance', 'Appearance'], ['business', 'Business'], ['brand', 'Brand'], ['currency', 'Currency'], ['notifications', 'Notifications'], ['templates', 'Templates'], ['invoices', 'Invoice Settings'], ['proposals', 'Proposal Settings'], ['contracts', 'Contract Templates'], ['ai', 'AI'], ['security', 'Security'], ['subscription', 'Subscription']];
 
 export function settingsView(params) {
-  const section = SECTIONS.some(([id]) => id === params.section) ? params.section : 'profile';
+  const PERSONAL = ['profile', 'language', 'appearance', 'security'];
+  const visible = SECTIONS.filter(([id]) => PERSONAL.includes(id) || wsCan('settings'));
+  const section = visible.some(([id]) => id === params.section) ? params.section : 'profile';
   const b = myBusiness();
   const u = me();
   const pr = myProfile();
@@ -96,7 +98,7 @@ export function settingsView(params) {
         ${pl.id === cur ? html`<span class="pill pill-green"><span class="dot"></span>${t('Current plan')}</span>` : html`<button class="btn btn-secondary" data-action="plan-switch" data-plan="${pl.id}">${t('Switch to {plan}', { plan: t(pl.name) })}</button>`}</div>`)}</div>
       <p class="small muted" style="margin-top:16px">${t('Billing is not connected in this MVP')} ${comingSoon()}. ${t('Switching plans applies immediately and free of charge so you can try each tier.')}</p>`; },
   };
-  return html`${pageHead({ title: t('Settings') })}${tabs(SECTIONS.map(([id, l]) => [id, t(l), `/settings/${id}`]), section)}<div style="max-width:820px">${views[section]()}</div>`;
+  return html`${pageHead({ title: t('Settings') })}${tabs(visible.map(([id, l]) => [id, t(l), `/settings/${id}`]), section)}<div style="max-width:820px">${views[section]()}</div>`;
 }
 
 onForm({

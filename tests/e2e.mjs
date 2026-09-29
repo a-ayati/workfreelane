@@ -38,7 +38,8 @@ try {
   await app.waitForFunction(() => location.hash === '#/onboarding', null, { timeout: 15000 }); await app.waitForTimeout(200);
   check('freelancer can register', true);
 
-  // Onboarding (7 steps, one decision per screen)
+  // Onboarding (one decision per screen)
+  await app.click('.tile:has-text("Individual")'); await app.click('button:has-text("Continue")');
   await app.click('.tile:has-text("Video Editor")'); await app.click('.tile:has-text("Photographer")');
   await app.click('button:has-text("Continue")');
   await app.waitForSelector('text=What do you want to manage?');

@@ -1,10 +1,10 @@
 // Landing page, authentication pages and the development mailbox.
-import { html, icon, href, field, onAction, onForm, go, toast, pageHead, empty } from '../ui.js';
+import { html, icon, href, field, onAction, onForm, go, toast, pageHead, empty, avatar } from '../ui.js';
 import { auth, sendVerification } from '../core/auth.js';
 import { db } from '../core/store.js';
 import { t, setUiLang } from '../core/i18n.js';
 import { fmtDateTime } from '../core/util.js';
-import { seedDemo, DEMO } from '../seed.js';
+import { seedDemo, DEMO, DEMO_LOGINS } from '../seed.js';
 import { langSwitch } from './shell.js';
 
 export function landing() {
@@ -101,7 +101,8 @@ export const login = () => authFrame(html`
     <button class="btn btn-primary btn-lg btn-block" type="submit">${t('Sign in')}</button>
   </form>
   <p class="auth-alt"><a href="${href('/forgot')}">${t('Forgot password?')}</a> · ${t('New here?')} <a href="${href('/signup')}">${t('Create an account')}</a></p>
-  <div class="demo-box"><b>${t('Want to look around first?')}</b><p class="muted" style="margin:4px 0 12px">${t('Open a demo workspace for {name}, Creative Director, with realistic clients and projects.', { name: DEMO.name })}</p><button class="btn btn-secondary btn-block" data-action="demo-login">${t('Explore the demo')}</button></div>`);
+  <div class="demo-box"><b>${t('Want to look around first?')}</b><p class="muted" style="margin:4px 0 12px">${t('A production company and a TV channel working on the same series. Sign in as either side to see what each person sees.')}</p>
+    <div class="demo-people">${DEMO_LOGINS.map((x) => html`<button class="demo-person" data-action="demo-login" data-email="${x.email}">${avatar(x.name, null, 32)}<span><b>${x.name}</b><small>${t(x.role)}</small></span>${icon('arrow', 15)}</button>`)}</div></div>`);
 
 export const signup = () => authFrame(html`
   <h1>${t('Create your account')}</h1><p class="muted">${t('Free to start. No card required.')}</p>
@@ -157,6 +158,6 @@ onForm({
   async reset(v) { await auth.resetPassword(v.token, v.password); toast(t('Password updated. Please sign in.')); go('/login'); return false; },
 });
 onAction({
-  async 'demo-login'() { await seedDemo(); await auth.login({ email: DEMO.email, password: DEMO.password }); go('/dashboard'); return false; },
+  async 'demo-login'(el) { await seedDemo(); await auth.login({ email: el.dataset.email || DEMO.email, password: DEMO.password }); go('/dashboard'); return false; },
   'resend-verification'() { sendVerification(auth.requireUser()); toast(t('Verification email sent to your dev mailbox.')); return false; },
 });

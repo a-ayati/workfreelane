@@ -49,8 +49,9 @@ export function projectActivity(projectId) {
   return db.all('activityLogs', (a) => a.projectId === projectId).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
 }
 export function recentActivity(limit = 12) {
-  const b = myBusiness();
-  return db.all('activityLogs', (a) => a.businessId === b.id).sort((a, z) => z.createdAt.localeCompare(a.createdAt)).slice(0, limit);
+  const projects = new Map(listProjects({}).map((p) => [p.id, p]));
+  const ok = (a) => { const p = projects.get(a.projectId); return p && can(p, 'activity.view') && (can(p, 'finance.view') || !/^(invoice|payment|deposit)\./.test(a.action)); };
+  return db.all('activityLogs', (a) => projects.has(a.projectId)).filter(ok).sort((a, z) => z.createdAt.localeCompare(a.createdAt)).slice(0, limit);
 }
 
 // ---------- Notifications ----------
