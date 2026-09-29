@@ -4,7 +4,7 @@ import { db } from '../core/store.js';
 import { mailer, appLink } from '../core/mailer.js';
 import { t, tl } from '../core/i18n.js';
 import { UserError, req, opt, money, int, dateStr, nowISO, todayISO, addDays, clock, round2, sum, fmtMoney } from '../core/util.js';
-import { myBusiness, requireProject, requireOwned, logActivity, freelancerActor, clientActor, notifyOwner, portalProject, touchClient, clientLang } from './context.js';
+import { myBusiness, requireProject, requireOwned, logActivity, freelancerActor, clientActor, notifyOwner, notifyClientSide, portalProject, portalGuard, touchClient, clientLang, can } from './context.js';
 import { invoiceTotals, financials, setStatus, acceptedProposal } from './core.js';
 
 export function effectiveStatus(inv) {
@@ -69,22 +69,23 @@ export function createDepositInvoice(project, actor) {
 
 export function listInvoices({ projectId, status } = {}) {
   const b = myBusiness();
-  return db.all('invoices', (i) => i.businessId === b.id && (!projectId || i.projectId === projectId))
+  return db.all('invoices', (i) => i.businessId === b.id && (!projectId || i.projectId === projectId) && can(db.get('projects', i.projectId), 'finance.view'))
     .map((i) => ({ ...i, status: effectiveStatus(i) }))
     .filter((i) => !status || i.status === status)
     .sort((a, z) => z.issueDate.localeCompare(a.issueDate) || z.number.localeCompare(a.number));
 }
-export function getInvoice(id) { const i = requireOwned('invoices', id, 'invoice'); return { ...i, status: effectiveStatus(i) }; }
+export function getInvoice(id) { const i = requireOwned('invoices', id, 'invoice', 'finance.view'); return { ...i, status: effectiveStatus(i) }; }
+const managedInvoice = (id) => { const inv = getInvoice(id); requireProject(inv.projectId, 'finance.manage'); return inv; };
 
 export function createInvoice(projectId, data) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'finance.manage');
   const inv = insertInvoice(p, { kind: data.kind || 'custom', items: data.items, changeOrderId: data.changeOrderId || null, dueDays: data.dueDays != null ? int(data.dueDays, 'Due days', 'dueDays', 0, 365) : undefined });
   logActivity(p, freelancerActor(), 'invoice.created', 'Invoice {number} created', { number: inv.number });
   return inv;
 }
 
 export function invoiceChangeOrder(changeOrderId) {
-  const co = requireOwned('changeOrders', changeOrderId, 'change order');
+  const co = requireOwned('changeOrders', changeOrderId, 'change order', 'finance.manage');
   if (co.status !== 'approved') throw new UserError(t('Only approved change orders can be invoiced.'));
   if (db.find('invoices', (i) => i.changeOrderId === co.id && i.status !== 'cancelled')) throw new UserError(t('This change order has already been invoiced.'));
   const p = db.get('projects', co.projectId);
@@ -92,7 +93,7 @@ export function invoiceChangeOrder(changeOrderId) {
 }
 
 export function createFinalInvoice(projectId) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'finance.manage');
   const f = financials(p);
   if (f.uninvoiced <= 0.001) throw new UserError(t('Everything on this project has already been invoiced.'));
   const acc = acceptedProposal(p.id);
@@ -103,7 +104,7 @@ export function createFinalInvoice(projectId) {
 }
 
 export function updateInvoice(id, data) {
-  const inv = getInvoice(id);
+  const inv = managedInvoice(id);
   if (inv.status !== 'draft') throw new UserError(t('Only draft invoices can be edited. Cancel it and create a new one if something changed.'));
   const clean = {
     issueDate: dateStr(data.issueDate, 'Issue date', 'issueDate', true),
@@ -121,22 +122,23 @@ export function updateInvoice(id, data) {
 }
 
 export function sendInvoice(id) {
-  const inv = getInvoice(id);
+  const inv = managedInvoice(id);
   if (inv.status !== 'draft') throw new UserError(t('This invoice has already been sent.'));
   if (invoiceTotals(id).total <= 0) throw new UserError(t('The invoice total must be greater than zero.'));
   const p = db.get('projects', inv.projectId);
   const c = db.get('clients', inv.clientId);
   db.update('invoices', id, { status: 'sent', sentAt: nowISO() });
   logActivity(p, freelancerActor(), 'invoice.sent', 'Invoice {number} sent', { number: inv.number });
+  notifyClientSide(p, { type: 'action', cap: 'finance.view', title: 'Invoice {number} from {business}', vars: { number: inv.number, business: db.get('businesses', inv.businessId).name }, section: 'invoice' });
   if (c?.email) {
     const L = clientLang(p);
-    mailer.send({ to: c.email, kind: 'invoice', subject: tl(L, 'Invoice {number} from {business}', { number: inv.number, business: myBusiness().name }), body: tl(L, 'Hi {name},\n\nYour invoice for {project} is ready.', { name: c.name, project: p.name }), link: appLink(`/client/${p.id}/invoice?t=${p.portalToken}`), linkLabel: tl(L, 'View invoice') });
+    mailer.send({ to: c.email, kind: 'invoice', subject: tl(L, 'Invoice {number} from {business}', { number: inv.number, business: db.get('businesses', inv.businessId).name }), body: tl(L, 'Hi {name},\n\nYour invoice for {project} is ready.', { name: c.name, project: p.name }), link: appLink(`/client/${p.id}/invoice?t=${p.portalToken}`), linkLabel: tl(L, 'View invoice') });
   }
   touchClient(inv.clientId);
 }
 
 export function cancelInvoice(id) {
-  const inv = getInvoice(id);
+  const inv = managedInvoice(id);
   if (db.find('payments', (x) => x.invoiceId === id && x.status === 'confirmed')) throw new UserError(t('This invoice has payments recorded, so it cannot be cancelled.'));
   db.update('invoices', id, { status: 'cancelled' });
   logActivity(db.get('projects', inv.projectId), freelancerActor(), 'invoice.cancelled', 'Invoice {number} cancelled', { number: inv.number });
@@ -155,7 +157,7 @@ function afterPayment(invoiceId, actor) {
 }
 
 export function recordPayment(invoiceId, data) {
-  const inv = getInvoice(invoiceId);
+  const inv = managedInvoice(invoiceId);
   if (['draft', 'cancelled'].includes(inv.status)) throw new UserError(t('Send the invoice before recording a payment.'));
   const tot = invoiceTotals(invoiceId);
   const amount = money(data.amount, 'Amount', 'amount', { allowZero: false });
@@ -172,7 +174,7 @@ export function recordPayment(invoiceId, data) {
 }
 
 export function confirmPayment(paymentId) {
-  const pay = requireOwned('payments', paymentId, 'payment');
+  const pay = requireOwned('payments', paymentId, 'payment', 'finance.manage');
   if (pay.status !== 'reported') throw new UserError(t('This payment is already confirmed.'));
   const tot = invoiceTotals(pay.invoiceId);
   if (pay.amount > tot.balance + 0.001) throw new UserError(t('This payment is more than the balance due. Reject it and record the correct amount.'));
@@ -182,19 +184,21 @@ export function confirmPayment(paymentId) {
   afterPayment(pay.invoiceId, freelancerActor());
 }
 export function rejectPayment(paymentId) {
-  const pay = requireOwned('payments', paymentId, 'payment');
+  const pay = requireOwned('payments', paymentId, 'payment', 'finance.manage');
   if (pay.status !== 'reported') throw new UserError(t('Only reported payments can be rejected.'));
   db.update('payments', paymentId, { status: 'rejected' });
 }
 
 export function listPayments() {
   const b = myBusiness();
-  return db.all('payments', (p) => p.businessId === b.id).sort((a, z) => (z.paidAt || '').localeCompare(a.paidAt || ''));
+  return db.all('payments', (p) => p.businessId === b.id && can(db.get('projects', p.projectId), 'finance.view')).sort((a, z) => (z.paidAt || '').localeCompare(a.paidAt || ''));
 }
 
 // ---------- Client portal ----------
 export function portalInvoices(projectId, token) {
-  portalProject(projectId, token);
+  const p = portalProject(projectId, token);
+  const acc = portalGuard(p);
+  if (acc?.side === 'client' && !acc.caps.has('finance.view')) return [];
   return db.all('invoices', (i) => i.projectId === projectId && !['draft', 'cancelled'].includes(i.status))
     .map((i) => ({ ...i, status: effectiveStatus(i) })).sort((a, z) => z.issueDate.localeCompare(a.issueDate));
 }
@@ -209,6 +213,7 @@ export function portalViewInvoice(projectId, token, invoiceId) {
 }
 export function portalReportPayment(projectId, token, invoiceId, data) {
   const p = portalProject(projectId, token);
+  portalGuard(p, 'finance.pay');
   const inv = db.get('invoices', invoiceId);
   if (!inv || inv.projectId !== p.id || ['draft', 'cancelled'].includes(inv.status)) throw new UserError(t('Invoice not found.'));
   const tot = invoiceTotals(inv.id);

@@ -3,23 +3,27 @@ import { db } from '../core/store.js';
 import { auth } from '../core/auth.js';
 import { t } from '../core/i18n.js';
 import { UserError, req, opt, email as vEmail, int, money, dateStr, lines, randomToken, nowISO, todayISO, addDays, sum, round2, clock, fmtShortDate } from '../core/util.js';
-import { me, myBusiness, requireProject, requireOwned, logActivity, freelancerActor, assertCanActivateProject } from './context.js';
+import { me, myBusiness, requireProject, requireOwned, logActivity, freelancerActor, assertCanActivateProject, projectAccess, requireWs, wsCan } from './context.js';
 import { CURRENCIES, TEMPLATES, PROJECT_TYPES, DEFAULT_CONTRACT_SECTIONS, DEFAULT_CONTRACT_SECTIONS_AR, OPEN_STATUSES } from './constants.js';
 
 const sections = (rows) => rows.map(([title, body]) => ({ title, body }));
 
 // ---------- Business & onboarding ----------
 export const MANAGE_OPTIONS = ['Projects', 'Clients', 'Proposals', 'Contracts', 'Invoices', 'Files'];
-export function completeOnboarding({ disciplines, manage, services, currency, businessName, logo }) {
-  const u = me();
-  if (db.find('businesses', (b) => b.ownerId === u.id)) throw new UserError(t('Your business is already set up.'));
-  const d = (disciplines || []).filter(Boolean).slice(0, 12);
-  if (!d.length) throw new UserError(t('Choose at least one type of work you do.'), 'disciplines');
-  if (!CURRENCIES.includes(currency)) throw new UserError(t('Choose a currency.'), 'currency');
-  const name = req(businessName, 'Business name', 'businessName', 120);
-  db.insert('profiles', { userId: u.id, disciplines: d, manage: (manage || []).filter((m) => MANAGE_OPTIONS.includes(m)), services: lines(services).slice(0, 30), title: t(d[0]), bio: '', phone: '' });
+export const PROJECT_COLORS = ['#3B6FE0', '#2E9E6B', '#7A5AE0', '#E0782E', '#D6456B', '#1F9AAE', '#C29218', '#4C5BD4'];
+const TYPE_ICON = { 'Video Production': 'film', 'Video Editing': 'film', 'Motion Graphics': 'film', Photography: 'camera', 'Logo Design': 'pen', 'Brand Identity': 'star', 'Social Media Package': 'megaphone', 'Marketing Campaign': 'megaphone', 'Content Creation': 'sparkles', 'TV Production': 'tv' };
+export const iconForType = (type) => TYPE_ICON[type] || 'folder';
+// Pick the least-used color in the workspace so neighbouring projects differ.
+export function nextProjectColor(businessId) {
+  const used = db.all('projects', (p) => p.businessId === businessId).map((p) => p.color);
+  return PROJECT_COLORS.map((c, i) => [c, used.filter((x) => x === c).length, i]).sort((a, z) => a[1] - z[1] || a[2] - z[2])[0][0];
+}
+
+// A workspace: a personal practice or an organization (company, channel, studio…).
+export function insertWorkspace(u, { kind = 'personal', orgType = '', name, currency, logo = '' }) {
   const b = db.insert('businesses', {
-    ownerId: u.id, name, currency, logo: logo || '', brandColor: '#17150F', address: '', taxRate: 0, taxLabel: t('VAT'),
+    ownerId: u.id, kind: kind === 'organization' ? 'organization' : 'personal', orgType: kind === 'organization' ? opt(orgType, 60) : '',
+    name, currency, logo: logo || '', brandColor: '#17150F', address: '', taxRate: 0, taxLabel: t('VAT'),
     invoicePrefix: 'INV-', nextInvoiceNumber: 1001, proposalPrefix: 'P-', nextProposalNumber: 101,
     paymentInstructions: t('Bank transfer to the account details provided on request. Please include the invoice number as the reference.'),
     defaultPaymentTerms: t('50% deposit before work begins, 50% on final approval before delivery of final files.'),
@@ -28,13 +32,27 @@ export function completeOnboarding({ disciplines, manage, services, currency, bu
     contractSections: sections(DEFAULT_CONTRACT_SECTIONS), contractSectionsAr: sections(DEFAULT_CONTRACT_SECTIONS_AR),
     notificationSettings: {}, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
   });
+  db.insert('workspaceMembers', { businessId: b.id, userId: u.id, role: 'owner', title: '', teamIds: [], status: 'active', email: u.email, name: u.name });
   db.insert('subscriptions', { businessId: b.id, plan: 'free', status: 'active', provider: 'none' });
+  db.update('users', u.id, { currentWorkspaceId: b.id });
+  return b;
+}
+
+export function completeOnboarding({ disciplines, manage, services, currency, businessName, logo, kind = 'personal', orgType = '' }) {
+  const u = me();
+  if (db.find('businesses', (b) => b.ownerId === u.id)) throw new UserError(t('Your business is already set up.'));
+  const d = (disciplines || []).filter(Boolean).slice(0, 12);
+  if (!d.length) throw new UserError(t('Choose at least one type of work you do.'), 'disciplines');
+  if (!CURRENCIES.includes(currency)) throw new UserError(t('Choose a currency.'), 'currency');
+  const name = req(businessName, 'Business name', 'businessName', 120);
+  if (!db.find('profiles', (p) => p.userId === u.id)) db.insert('profiles', { userId: u.id, disciplines: d, manage: (manage || []).filter((m) => MANAGE_OPTIONS.includes(m)), services: lines(services).slice(0, 30), title: t(d[0]), bio: '', phone: '' });
+  const b = insertWorkspace(u, { kind, orgType, name, currency, logo });
   auth.updateUser({ onboarded: true });
   return b;
 }
 
 export function updateBusiness(patch) {
-  const b = myBusiness();
+  const b = requireWs('settings');
   const clean = {};
   const s = (k, label, max = 500, required = false) => { if (k in patch) clean[k] = required ? req(patch[k], label, k, max) : opt(patch[k], max); };
   s('name', 'Business name', 120, true); s('address', 'Address', 500); s('paymentInstructions', 'Payment instructions', 2000);
@@ -83,17 +101,19 @@ function cleanClient(data) {
 }
 export function listClients() {
   const b = myBusiness();
+  if (!wsCan('clients.view')) return [];
   return db.all('clients', (c) => c.businessId === b.id).sort((a, z) => a.name.localeCompare(z.name));
 }
 export const getClient = (id) => requireOwned('clients', id, 'client');
 export function createClient(data) {
-  const b = myBusiness();
+  const b = requireWs('clients.manage');
   const c = cleanClient(data);
   if (c.email && db.find('clients', (x) => x.businessId === b.id && x.email === c.email)) throw new UserError(t('A client with this email already exists.'), 'email');
   return db.insert('clients', { ...c, businessId: b.id, lastContactAt: null });
 }
-export function updateClient(id, data) { getClient(id); return db.update('clients', id, cleanClient(data)); }
+export function updateClient(id, data) { requireWs('clients.manage'); getClient(id); return db.update('clients', id, cleanClient(data)); }
 export function deleteClient(id) {
+  requireWs('clients.manage');
   getClient(id);
   if (db.count('projects', (p) => p.clientId === id)) throw new UserError(t('This client has projects. Cancel or keep their projects instead of deleting the client.'));
   db.remove('clients', id);
@@ -122,17 +142,36 @@ export const invoiceTotal = (id) => invoiceTotals(id).total;
 export const invoicePaid = (id) => sum(db.all('payments', (p) => p.invoiceId === id && p.status === 'confirmed'), (p) => p.amount);
 
 // ---------- Projects ----------
-export function listProjects({ status, clientId } = {}) {
+// Projects of the current workspace, plus projects other organizations share with it.
+// Each row carries `side`: 'provider' (we deliver) or 'client' (we receive).
+export function listProjects({ status, clientId, includeShared = true } = {}) {
+  const u = me();
   const b = myBusiness();
-  return db.all('projects', (p) => p.businessId === b.id && (!status || (status === 'open' ? OPEN_STATUSES.includes(p.status) : p.status === status)) && (!clientId || p.clientId === clientId))
-    .sort((a, z) => (a.deadline || '9999').localeCompare(z.deadline || '9999'));
+  const match = (p) => (!status || (status === 'open' ? OPEN_STATUSES.includes(p.status) : p.status === status)) && (!clientId || p.clientId === clientId);
+  const out = [];
+  db.all('projects', (p) => match(p)).forEach((p) => {
+    const acc = projectAccess(u, p);
+    if (!acc) return;
+    if (p.businessId === b.id) out.push({ ...p, side: acc.side });
+    else if (includeShared && acc.side !== 'provider' && sharedWith(p, b.id, u)) out.push({ ...p, side: acc.side });
+  });
+  return out.sort((a, z) => (a.deadline || '9999').localeCompare(z.deadline || '9999'));
+}
+// A project is shown in a workspace when that organization takes part in it,
+// or when the user was added to it personally.
+function sharedWith(p, businessId, u) {
+  const c = db.get('clients', p.clientId);
+  if (c?.linkedBusinessId === businessId) return true;
+  if (db.find('projectOrgs', (x) => x.projectId === p.id && x.businessId === businessId)) return true;
+  const m = db.find('projectMembers', (x) => x.projectId === p.id && x.userId === u.id && x.status !== 'invited');
+  return !!m && (!m.businessId || m.businessId === businessId);
 }
 export const getProject = (id) => requireProject(id);
 
 const DEFAULT_EXCLUSIONS = ['Additional revision rounds beyond those included', 'Work outside the listed deliverables'];
 
 export function createProject(data) {
-  const b = myBusiness();
+  const b = requireWs('projects.create');
   const tpl = data.templateKey ? TEMPLATES[data.templateKey] : null;
   let clientId = data.clientId;
   if (clientId === '__new') {
@@ -154,8 +193,9 @@ export function createProject(data) {
     exclusions: (tpl ? tpl.exclusions : DEFAULT_EXCLUSIONS).map((x) => t(x)),
     portalToken: randomToken(18), portalDisabled: false, lockDeliveryUntilPaid: false,
     templateKey: data.templateKey || null, deliveredAt: null, completedAt: null, cancelledAt: null,
+    color: PROJECT_COLORS.includes(data.color) ? data.color : nextProjectColor(b.id), icon: iconForType(type), altName: opt(data.altName, 140),
   });
-  db.insert('projectMembers', { projectId: project.id, userId: me().id, role: 'owner' });
+  db.insert('projectMembers', { projectId: project.id, userId: me().id, businessId: b.id, side: 'provider', role: 'owner', status: 'active' });
   db.insert('briefs', {
     projectId: project.id, status: 'draft', objective: '', audience: '', platforms: '', tone: '', references: '', notes: '',
     deliverablesText: tpl ? tpl.deliverables.map(([x, q]) => `${q} × ${t(x)}`).join('\n') : '', productionNeeds: '', budget: project.budget || '', submittedAt: null,
@@ -167,7 +207,7 @@ export function createProject(data) {
 }
 
 export function updateProject(id, data) {
-  const p = requireProject(id);
+  const p = requireProject(id, 'settings.manage');
   const clean = {};
   if ('name' in data) clean.name = req(data.name, 'Project name', 'name', 140);
   if ('type' in data) clean.type = PROJECT_TYPES.includes(data.type) ? data.type : 'Other';
@@ -190,12 +230,12 @@ export function updateProject(id, data) {
 }
 
 export function regeneratePortalLink(id) {
-  requireProject(id);
+  requireProject(id, 'settings.manage');
   return db.update('projects', id, { portalToken: randomToken(18) });
 }
 
 export function cancelProject(id, reason) {
-  const p = requireProject(id);
+  const p = requireProject(id, 'settings.manage');
   if (['completed', 'cancelled'].includes(p.status)) throw new UserError(t('This project is already closed.'));
   db.update('projects', id, { status: 'cancelled', cancelledAt: nowISO() });
   if (reason) logActivity(p, freelancerActor(), 'project.cancelled', 'Project cancelled — {reason}', { reason: opt(reason, 300) });
@@ -211,7 +251,7 @@ export function setStatus(project, status) {
 // Scope: deliverables and exclusions
 export const listDeliverables = (projectId) => db.all('deliverables', (d) => d.projectId === projectId).sort((a, z) => (a.position || 0) - (z.position || 0));
 export function saveScope(projectId, { deliverables, exclusions }) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'scope.edit');
   if (!['draft'].includes(p.status)) throw new UserError(t('Scope is locked after the contract is accepted. Use a change order to add work.'));
   const rows = (deliverables || []).filter((d) => String(d.title || '').trim());
   if (rows.length > 60) throw new UserError(t('That is a lot of deliverables — keep it under 60.'));

@@ -19,6 +19,8 @@ export const TABLES = [
   'files', 'fileVersions', 'feedback', 'revisionRounds', 'approvals',
   'invoices', 'invoiceItems', 'payments',
   'portfolioItems', 'notifications', 'activityLogs', 'reminders', 'aiRuns',
+  // Organizations & collaboration
+  'workspaceMembers', 'teams', 'projectOrgs', 'tasks', 'messages', 'events',
 ];
 const APPEND_ONLY = new Set(['activityLogs']);
 

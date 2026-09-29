@@ -2,8 +2,8 @@
 import { db } from '../core/store.js';
 import { t } from '../core/i18n.js';
 import { UserError, req, opt, lines, nowISO, todayISO, addDays, clock, daysBetween, sum, round2 } from '../core/util.js';
-import { me, myBusiness, requireProject, requireOwned, notifyOwner, requireFeature } from './context.js';
-import { financials, invoiceTotals, listDeliverables, isOverdue } from './core.js';
+import { me, myBusiness, requireProject, requireOwned, notifyOwner, notify, requireFeature, projectAccess, orgRole, can, wsCan, projectParties, workspacesOf } from './context.js';
+import { financials, invoiceTotals, listDeliverables, isOverdue, listProjects } from './core.js';
 import { effectiveStatus } from './billing.js';
 import { OPEN_STATUSES } from './constants.js';
 
@@ -45,7 +45,7 @@ export function deletePortfolioItem(id) { getPortfolioItem(id); db.remove('portf
 
 // ---------- Activity ----------
 export function projectActivity(projectId) {
-  requireProject(projectId);
+  requireProject(projectId, 'activity.view', { anySide: true });
   return db.all('activityLogs', (a) => a.projectId === projectId).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
 }
 export function recentActivity(limit = 12) {
@@ -72,53 +72,118 @@ export function dismissNotification(id) {
 }
 export function markAllRead() { listNotifications().filter((n) => !n.readAt).forEach((n) => db.update('notifications', n.id, { readAt: nowISO() })); }
 
-// Time-based notifications, de-duplicated with a stable key. Runs on app load.
+// Time-based notifications, de-duplicated with a stable key per person. Runs on
+// app load for the signed-in user, across every project they can see, and only
+// for what their role lets them act on.
 export function sweepReminders() {
-  const b = myBusiness();
+  const u = me();
   const today = todayISO();
-  const tomorrow = addDays(clock.now(), 1).toISOString().slice(0, 10);
-  const projects = db.all('projects', (p) => p.businessId === b.id);
-  projects.forEach((p) => {
-    if (OPEN_STATUSES.includes(p.status) && p.deadline === tomorrow) notifyOwner(p, { type: 'deadline', title: 'Deadline tomorrow', body: '{project} is due tomorrow.', vars: { project: p.name }, link: `/projects/${p.id}`, key: `deadline:${p.id}:${p.deadline}` });
-    if (isOverdue(p)) notifyOwner(p, { type: 'deadline', title: 'Project past deadline', body: '{project} was due {date}.', vars: { project: p.name, date: p.deadline }, link: `/projects/${p.id}`, key: `late:${p.id}:${p.deadline}` });
-    const waiting = [
-      ...db.all('proposals', (x) => x.projectId === p.id && ['sent', 'viewed'].includes(x.status)).map((x) => ['proposal', x.sentAt]),
-      ...db.all('contracts', (x) => x.projectId === p.id && x.status === 'sent').map((x) => ['contract', x.sentAt]),
-      ...db.all('approvals', (x) => x.projectId === p.id && x.status === 'pending').map((x) => ['final approval', x.requestedAt]),
-    ];
-    waiting.forEach(([what, at]) => {
-      if (at && daysBetween(at, clock.now()) >= 3) {
-        notifyOwner(p, { type: 'stale', title: 'Client has not responded', body: 'No response on the {what_t} for {project} for {n} days. Consider a polite follow-up.', vars: { what_t: what, project: p.name, n: daysBetween(at, clock.now()) }, link: `/projects/${p.id}`, key: `stale:${p.id}:${what}:${at}` });
-      }
+  const days = (date) => daysBetween(today, date);
+  const mine = (p, payload) => notify(p, { ...payload, users: [u.id], key: `${payload.key}:${u.id}` });
+  db.all('projects').forEach((p) => {
+    const acc = projectAccess(u, p);
+    if (!acc) return;
+    const has = (c) => acc.caps.has(c);
+    const open = OPEN_STATUSES.includes(p.status);
+    const link = `/projects/${p.id}`;
+    // Delivery date: 2 days, tomorrow, today, overdue.
+    if (open && p.deadline && p.status !== 'approved') {
+      const d = days(p.deadline);
+      const msg = d === 2 ? 'Delivery due in 2 days' : d === 1 ? 'Delivery due tomorrow' : d === 0 ? 'Delivery due today' : d < 0 ? 'Delivery overdue' : null;
+      if (msg) mine(p, { type: 'deadline', category: d < 0 ? 'action' : 'reminder', title: msg, body: '{project}', vars: { project: p.name }, link, key: `due:${p.id}:${p.deadline}:${d < 0 ? 'late' : d}` });
+    }
+    // Invoices: 3 days, today, overdue (finance roles on either side).
+    if (has('finance.view')) {
+      db.all('invoices', (i) => i.projectId === p.id && !['draft', 'cancelled'].includes(i.status)).forEach((inv) => {
+        const st = effectiveStatus(inv);
+        if (st === 'overdue' && inv.status !== 'overdue') db.update('invoices', inv.id, { status: 'overdue' });
+        if (['paid', 'cancelled'].includes(st)) return;
+        const d = days(inv.dueDate);
+        const ilink = acc.side === 'provider' ? `/invoices/${inv.id}` : `/projects/${p.id}/invoice`;
+        const msg = d === 3 ? 'Invoice {number} is due in 3 days' : d === 0 ? 'Invoice {number} is due today' : d < 0 ? 'Invoice {number} is overdue' : null;
+        if (msg) mine(p, { type: 'payment', category: d < 0 ? 'action' : 'reminder', title: msg, body: '{project}', vars: { number: inv.number, project: p.name }, link: ilink, key: `inv:${inv.id}:${inv.dueDate}:${d < 0 ? 'late' : d}` });
+      });
+    }
+    // My tasks.
+    db.all('tasks', (x) => x.projectId === p.id && x.assigneeId === u.id && x.status !== 'done' && x.dueDate).forEach((x) => {
+      const d = days(x.dueDate);
+      const msg = d === 1 ? 'Task due tomorrow' : d === 0 ? 'Task due today' : d < 0 ? 'Task overdue' : null;
+      if (msg) mine(p, { type: 'task', category: d < 0 ? 'action' : 'reminder', title: msg, body: '{title} · {project}', vars: { title: x.title, project: p.name }, link: `${link}/tasks`, key: `task:${x.id}:${x.dueDate}:${d < 0 ? 'late' : d}` });
     });
-  });
-  db.all('invoices', (i) => i.businessId === b.id).forEach((inv) => {
-    if (effectiveStatus(inv) === 'overdue') {
-      notifyOwner(db.get('projects', inv.projectId), { type: 'payment', title: 'Invoice overdue', body: '{number} was due {date}.', vars: { number: inv.number, date: inv.dueDate }, link: `/invoices/${inv.id}`, key: `overdue:${inv.id}:${inv.dueDate}` });
-      if (inv.status !== 'overdue') db.update('invoices', inv.id, { status: 'overdue' });
+    // Meetings and milestones today.
+    if (has('calendar.view')) {
+      db.all('events', (e) => e.projectId === p.id && (e.shared || e.side === acc.side) && e.date === today).forEach((e) => {
+        mine(p, { type: 'meeting', title: e.type === 'milestone' ? 'Milestone today: {title}' : 'Today: {title}', body: e.time ? '{time} · {project}' : '{project}', vars: { title: e.title, time: e.time, project: p.name }, link: `${link}/calendar`, key: `event:${e.id}:${e.date}` });
+      });
+    }
+    // Waiting for me (client side): approvals, proposals, contracts, change orders.
+    if (acc.side === 'client') {
+      if (has('approvals.respond')) db.all('approvals', (a) => a.projectId === p.id && a.status === 'pending').forEach((a) => mine(p, { type: 'approval', category: 'action', title: '{file} {version} is waiting for your approval', body: '{project}', vars: { file: a.fileName, version: a.versionLabel, project: p.name }, link: `${link}/approval`, key: `appr:${a.id}` }));
+      if (has('proposal.respond')) db.all('proposals', (x) => x.projectId === p.id && ['sent', 'viewed'].includes(x.status)).forEach((x) => mine(p, { type: 'action', category: 'action', title: 'Proposal waiting for your response', body: '{project}', vars: { project: p.name }, link: `${link}/proposal`, key: `prop:${x.id}` }));
+      if (has('contract.accept')) db.all('contracts', (x) => x.projectId === p.id && x.status === 'sent').forEach((x) => mine(p, { type: 'action', category: 'action', title: 'Contract waiting for your acceptance', body: '{project}', vars: { project: p.name }, link: `${link}/contract`, key: `con:${x.id}` }));
+    }
+    // Delivering side: nudge when the client has not answered.
+    if (acc.side === 'provider' && has('proposal.edit')) {
+      const waiting = [
+        ...db.all('proposals', (x) => x.projectId === p.id && ['sent', 'viewed'].includes(x.status)).map((x) => ['proposal', x.sentAt]),
+        ...db.all('contracts', (x) => x.projectId === p.id && x.status === 'sent').map((x) => ['contract', x.sentAt]),
+        ...db.all('approvals', (x) => x.projectId === p.id && x.status === 'pending').map((x) => ['final approval', x.requestedAt]),
+      ];
+      waiting.forEach(([what, at]) => {
+        if (at && daysBetween(at, clock.now()) >= 3) mine(p, { type: 'stale', title: 'Client has not responded', body: 'No response on the {what_t} for {project} for {n} days. Consider a polite follow-up.', vars: { what_t: what, project: p.name, n: daysBetween(at, clock.now()) }, link, key: `stale:${p.id}:${what}:${at}` });
+      });
     }
   });
-  db.all('reminders', (r) => r.businessId === b.id && !r.doneAt && r.dueDate <= today).forEach((r) => {
+  // Follow-up reminders of the workspaces I manage.
+  db.all('reminders', (r) => !r.doneAt && r.dueDate <= today && ['owner', 'admin', 'manager'].includes(orgRole(u, r.businessId))).forEach((r) => {
     const c = db.get('clients', r.clientId);
-    notifyOwner({ id: r.projectId, businessId: b.id }, { type: 'followup', title: 'Follow up with {client}', body: '{note}', vars: { client: c?.name || '', note: r.note }, link: `/clients/${r.clientId}`, key: `reminder:${r.id}` });
+    notify({ id: r.projectId || null, businessId: r.businessId }, { type: 'followup', users: [u.id], title: 'Follow up with {client}', body: '{note}', vars: { client: c?.name || '', note: r.note }, link: `/clients/${r.clientId}`, key: `reminder:${r.id}:${u.id}` });
   });
 }
 
 // ---------- Search ----------
+// Arabic-aware matching: ignore diacritics and tatweel, fold alef/ya/ta-marbuta
+// variants, so «برنامج», «برنامج» and «بَرنامج» all match.
+export function normalizeSearch(s) {
+  return String(s || '').toLowerCase()
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
+    .replace(/[\u0622\u0623\u0625\u0671]/g, '\u0627').replace(/\u0649/g, '\u064A').replace(/\u0629/g, '\u0647')
+    .replace(/\u0624/g, '\u0648').replace(/\u0626/g, '\u064A')
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[#\s]+/g, ' ').trim();
+}
 export function search(q) {
+  const u = me();
   const b = myBusiness();
-  const term = String(q || '').trim().toLowerCase();
+  const term = normalizeSearch(q);
   if (term.length < 2) return [];
-  const hit = (...xs) => xs.some((x) => String(x || '').toLowerCase().includes(term));
+  const words = term.split(' ');
+  const hit = (...xs) => { const hay = normalizeSearch(xs.filter(Boolean).join(' ')); return words.every((w) => hay.includes(w)); };
+  const projects = listProjects({});
+  const visible = new Map(projects.map((p) => [p.id, p]));
   const clients = db.all('clients', (c) => c.businessId === b.id);
   const cName = (id) => clients.find((c) => c.id === id)?.name || '';
+  const partyName = (p) => projectParties(p).filter((x) => x.side !== 'provider' || p.side === 'client').map((x) => x.name).join(' ');
   const out = [];
-  db.all('projects', (p) => p.businessId === b.id && hit(p.name, p.type, cName(p.clientId))).forEach((p) => out.push({ kind: 'Project', title: p.name, sub: cName(p.clientId), href: `/projects/${p.id}` }));
-  clients.filter((c) => hit(c.name, c.company, c.email)).forEach((c) => out.push({ kind: 'Client', title: c.name, sub: c.company || c.email, href: `/clients/${c.id}` }));
-  db.all('proposals', (x) => x.businessId === b.id && hit(x.number, x.title, cName(x.clientId))).forEach((x) => out.push({ kind: 'Proposal', title: `${x.number} · ${x.title}`, sub: cName(x.clientId), href: `/proposals/${x.id}` }));
-  db.all('invoices', (x) => x.businessId === b.id && hit(x.number, `#${x.number}`, cName(x.clientId), db.get('projects', x.projectId)?.name)).forEach((x) => out.push({ kind: 'Invoice', title: t('Invoice {number}', { number: x.number }), sub: cName(x.clientId), href: `/invoices/${x.id}` }));
-  db.all('files', (f) => f.businessId === b.id && hit(f.name)).forEach((f) => out.push({ kind: 'File', title: f.name, sub: db.get('projects', f.projectId)?.name, href: `/projects/${f.projectId}/files` }));
-  return out.slice(0, 50);
+  projects.filter((p) => hit(p.name, p.altName, t(p.type), cName(p.clientId), partyName(p))).forEach((p) => out.push({ kind: 'Project', title: p.name, sub: [p.altName, partyName(p)].filter(Boolean).join(' · '), href: `/projects/${p.id}`, color: p.color }));
+  // Organizations: my workspaces, partner organizations of visible projects, clients.
+  const orgs = new Map();
+  projects.forEach((p) => projectParties(p).forEach((x) => { if (x.businessId && x.businessId !== b.id) orgs.set(x.businessId, x); }));
+  workspacesOf(u).forEach((w) => { if (w.id !== b.id) orgs.set(w.id, { businessId: w.id, name: w.name, kind: w.kind }); });
+  [...orgs.values()].filter((o) => hit(o.name, db.get('businesses', o.businessId)?.orgType)).forEach((o) => out.push({ kind: 'Organization', title: o.name, sub: t(db.get('businesses', o.businessId)?.orgType || 'Organization'), href: workspacesOf(u).some((w) => w.id === o.businessId) ? `/organization?switch=${o.businessId}` : '/projects' }));
+  if (wsCan('clients.view')) clients.filter((c) => hit(c.name, c.company, c.email)).forEach((c) => out.push({ kind: 'Client', title: c.name, sub: c.company || c.email, href: `/clients/${c.id}` }));
+  // People: my organization and everyone on visible projects.
+  const people = new Map();
+  db.all('workspaceMembers', (m) => m.businessId === b.id && m.status === 'active').forEach((m) => people.set(m.userId, { title: m.title, href: '/organization' }));
+  projects.forEach((p) => db.all('projectMembers', (m) => m.projectId === p.id && m.userId).forEach((m) => { if (!people.has(m.userId)) people.set(m.userId, { title: '', href: `/projects/${p.id}/team`, project: p.name }); }));
+  people.forEach((info, id) => { const pu = db.get('users', id); if (pu && hit(pu.name, pu.email, info.title)) out.push({ kind: 'Person', title: pu.name, sub: info.title || info.project || pu.email, href: info.href }); });
+  const docs = (table, cap) => db.all(table, (x) => visible.has(x.projectId) && can(visible.get(x.projectId), cap));
+  docs('proposals', 'proposal.view').filter((x) => hit(x.number, x.title, cName(x.clientId))).forEach((x) => out.push({ kind: 'Proposal', title: `${x.number} · ${x.title}`, sub: visible.get(x.projectId)?.name, href: visible.get(x.projectId)?.side === 'provider' ? `/proposals/${x.id}` : `/projects/${x.projectId}/proposal` }));
+  docs('contracts', 'contract.view').filter((x) => x.status !== 'void' && hit(x.title, visible.get(x.projectId)?.name)).forEach((x) => out.push({ kind: 'Contract', title: x.title, sub: visible.get(x.projectId)?.name, href: `/projects/${x.projectId}/contract` }));
+  docs('invoices', 'finance.view').filter((x) => x.status !== 'draft' || visible.get(x.projectId)?.side === 'provider').filter((x) => hit(x.number, cName(x.clientId), visible.get(x.projectId)?.name)).forEach((x) => out.push({ kind: 'Invoice', title: t('Invoice {number}', { number: x.number }), sub: visible.get(x.projectId)?.name, href: visible.get(x.projectId)?.side === 'provider' ? `/invoices/${x.id}` : `/projects/${x.projectId}/invoice` }));
+  docs('files', 'files.view').filter((f) => hit(f.name)).forEach((f) => out.push({ kind: 'File', title: f.name, sub: visible.get(f.projectId)?.name, href: `/projects/${f.projectId}/files` }));
+  docs('messages', 'messages').filter((m) => hit(m.body, m.authorName)).slice(0, 8).forEach((m) => out.push({ kind: 'Message', title: m.body.slice(0, 80), sub: `${m.authorName} · ${visible.get(m.projectId)?.name}`, href: `/projects/${m.projectId}/messages` }));
+  return out.slice(0, 60);
 }
 
 // ---------- Analytics ----------

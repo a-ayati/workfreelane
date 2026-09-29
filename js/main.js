@@ -6,6 +6,7 @@ import { t, setActiveLang, uiLang } from './core/i18n.js';
 import { html, route, match, parseHash, setRenderer, installDelegation, rerender, go, href, isDirty, toast, empty, closeModal, animateCounts } from './ui.js';
 import './views/command.js';
 import { maybeBusiness } from './services/context.js';
+import { migrate, acceptInvites } from './services/org.js';
 import { appShell } from './views/shell.js';
 import * as pub from './views/public.js';
 import { onboarding, onboardingDone } from './views/onboarding.js';
@@ -62,7 +63,8 @@ function errorPage(err, inApp) {
 function render() {
   const { path, query } = parseHash();
   const m = match(path);
-  const user = auth.currentUser();
+  let user = auth.currentUser();
+  if (user && acceptInvites(user)) user = auth.currentUser();
   setActiveLang(m?.handler.layout === 'portal' ? portalLang(m.params.pid) : uiLang());
   if (!m) { root.innerHTML = String(errorPage({ name: 'NotFoundError', userFacing: true, message: t("This page doesn't exist.") }, !!user)); return; }
   const { layout, view, nav, title } = m.handler;
@@ -70,7 +72,7 @@ function render() {
   // Guards
   if (layout === 'auth' && user) return go(user.onboarded ? '/dashboard' : '/onboarding');
   if ((layout === 'app' || layout === 'onboarding') && !user) return go('/login');
-  if (layout === 'app' && (!user.onboarded || !maybeBusiness())) return go('/onboarding');
+  if (layout === 'app' && !maybeBusiness()) return go('/onboarding');
   if (layout === 'onboarding' && user.onboarded && maybeBusiness() && !onboardingDone()) return go('/dashboard');
 
   if (path !== lastPath) { closeModal(); }
@@ -97,6 +99,7 @@ function render() {
 async function boot() {
   try {
     await initStore();
+    migrate();
   } catch (e) {
     console.error(e);
     root.innerHTML = `<p style="padding:24px">${t('Scopewise could not open its local storage. Please reload the page, or try another browser.')}</p>`;

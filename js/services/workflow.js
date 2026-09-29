@@ -3,7 +3,7 @@ import { db } from '../core/store.js';
 import { mailer, appLink } from '../core/mailer.js';
 import { t, tl } from '../core/i18n.js';
 import { UserError, req, opt, money, int, dateStr, nowISO, todayISO, addDays, clock, fmtMoney, fmtDate, sum, daysBetween } from '../core/util.js';
-import { myBusiness, requireProject, requireOwned, logActivity, freelancerActor, clientActor, systemActor, notifyOwner, portalProject, assertCanActivateProject, touchClient, clientLang } from './context.js';
+import { myBusiness, requireProject, requireOwned, logActivity, freelancerActor, clientActor, systemActor, notifyOwner, notifyClientSide, portalProject, portalGuard, assertCanActivateProject, touchClient, clientLang, can } from './context.js';
 import { listDeliverables, proposalTotal, acceptedProposal, financials, saveScope, contractTemplateFor } from './core.js';
 import { createDepositInvoice } from './billing.js';
 import { CONTRACT_DISCLAIMER, PROJECT_TYPES } from './constants.js';
@@ -12,6 +12,8 @@ const clientOf = (p) => db.get('clients', p.clientId);
 const portalLink = (p, section = '') => appLink(`/client/${p.id}${section ? '/' + section : ''}?t=${p.portalToken}`);
 // Emails to the client are written in the client's language.
 function mailClient(p, { subject, subjectVars, body, bodyVars, section, linkLabel, kind }) {
+  // Signed-in members of the client organization see it in the app too.
+  notifyClientSide(p, { type: 'action', title: subject, body, vars: { ...(subjectVars || {}), ...(bodyVars || {}) }, section: section === 'invoice' ? 'invoice' : section });
   const c = clientOf(p);
   if (!c?.email) return;
   const L = clientLang(p);
@@ -39,7 +41,7 @@ function cleanBrief(data) {
 }
 
 export function saveBrief(projectId, data) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'brief.edit');
   const brief = getBrief(projectId);
   const patch = cleanBrief(data);
   const pPatch = {};
@@ -53,7 +55,7 @@ export function saveBrief(projectId, data) {
 }
 
 export function sendBrief(projectId) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'brief.edit');
   const brief = getBrief(projectId);
   if (!clientOf(p)?.email) throw new UserError(t('Add an email address to this client first, or share the client link yourself.'));
   db.update('briefs', brief.id, { status: 'sent', sentAt: nowISO() });
@@ -62,13 +64,14 @@ export function sendBrief(projectId) {
   touchClient(p.clientId);
 }
 export function markBriefReviewed(projectId) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'brief.edit');
   db.update('briefs', getBrief(projectId).id, { status: 'reviewed' });
   logActivity(p, freelancerActor(), 'brief.reviewed', 'Brief reviewed');
 }
 
 export function portalSubmitBrief(projectId, token, data) {
   const p = portalProject(projectId, token);
+  portalGuard(p, 'brief.submit');
   const brief = getBrief(projectId);
   if (brief.status !== 'sent') throw new UserError(t('This brief is not open for editing right now.'));
   const patch = cleanBrief(data);
@@ -81,10 +84,11 @@ export function portalSubmitBrief(projectId, token, data) {
 // ---------- Proposals ----------
 export function listProposals() {
   const b = myBusiness();
-  return db.all('proposals', (x) => x.businessId === b.id).map(expireIfNeeded).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
+  return db.all('proposals', (x) => x.businessId === b.id && can(db.get('projects', x.projectId), 'proposal.view')).map(expireIfNeeded).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
 }
 export const proposalItems = (id) => db.all('proposalItems', (i) => i.proposalId === id).sort((a, z) => (a.position || 0) - (z.position || 0));
-export function getProposal(id) { return expireIfNeeded(requireOwned('proposals', id, 'proposal')); }
+export function getProposal(id) { return expireIfNeeded(requireOwned('proposals', id, 'proposal', 'proposal.view')); }
+const editableProposal = (id) => { const prop = getProposal(id); requireProject(prop.projectId, 'proposal.edit'); return prop; };
 
 function expireIfNeeded(prop) {
   if (['sent', 'viewed'].includes(prop.status) && prop.validUntil && prop.validUntil < todayISO()) {
@@ -94,7 +98,7 @@ function expireIfNeeded(prop) {
 }
 
 export function createProposal(projectId) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'proposal.edit');
   if (acceptedProposal(p.id)) throw new UserError(t('This project already has an accepted proposal. Use a change order to add work.'));
   const open = db.find('proposals', (x) => x.projectId === p.id && ['draft', 'sent', 'viewed'].includes(x.status));
   if (open) throw new UserError(t('This project already has an open proposal.'));
@@ -119,7 +123,7 @@ export function createProposal(projectId) {
 }
 
 export function updateProposal(id, data) {
-  const prop = getProposal(id);
+  const prop = editableProposal(id);
   if (prop.status !== 'draft') throw new UserError(t('Only draft proposals can be edited.'));
   const p = db.get('projects', prop.projectId);
   const clean = {
@@ -142,7 +146,7 @@ export function updateProposal(id, data) {
 }
 
 export function sendProposal(id) {
-  const prop = getProposal(id);
+  const prop = editableProposal(id);
   if (prop.status !== 'draft') throw new UserError(t('This proposal has already been sent.'));
   const p = db.get('projects', prop.projectId);
   if (proposalTotal(id) <= 0) throw new UserError(t('Add a price before sending the proposal.'));
@@ -156,7 +160,7 @@ export function sendProposal(id) {
 }
 
 export function reviseProposal(id) {
-  const prop = getProposal(id);
+  const prop = editableProposal(id);
   if (!['rejected', 'expired', 'sent', 'viewed'].includes(prop.status)) throw new UserError(t('This proposal cannot be revised.'));
   const p = db.get('projects', prop.projectId);
   db.update('proposals', id, { status: 'draft', validUntil: addDays(clock.now(), myBusiness().proposalValidityDays || 14).toISOString().slice(0, 10), sentAt: null, viewedAt: null, respondedAt: null });
@@ -178,6 +182,7 @@ export function portalViewProposal(projectId, token) {
 }
 export function portalRespondProposal(projectId, token, { decision, name, note }) {
   const p = portalProject(projectId, token);
+  portalGuard(p, 'proposal.respond');
   const prop = portalProposal(projectId, token);
   if (!prop || !['sent', 'viewed'].includes(prop.status)) throw new UserError(t('This proposal is no longer open for a response.'));
   const actor = clientActor(p, name);
@@ -230,13 +235,14 @@ export function generateContract(p, prop, actor) {
 
 export function listContracts() {
   const b = myBusiness();
-  return db.all('contracts', (c) => c.businessId === b.id && c.status !== 'void').sort((a, z) => z.createdAt.localeCompare(a.createdAt));
+  return db.all('contracts', (c) => c.businessId === b.id && c.status !== 'void' && can(db.get('projects', c.projectId), 'contract.view')).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
 }
 export const projectContract = (projectId) => db.all('contracts', (c) => c.projectId === projectId && c.status !== 'void').sort((a, z) => z.createdAt.localeCompare(a.createdAt))[0] || null;
-export const getContract = (id) => requireOwned('contracts', id, 'contract');
+export const getContract = (id) => requireOwned('contracts', id, 'contract', 'contract.view');
 
 export function updateContract(id, sections) {
   const c = getContract(id);
+  requireProject(c.projectId, 'contract.edit');
   if (c.status === 'accepted') throw new UserError(t('An accepted contract cannot be changed.'));
   const clean = sections.map((s) => ({ title: req(s.title, 'Section title', null, 120), body: opt(s.body, 6000) }));
   db.update('contracts', id, { sections: clean });
@@ -244,7 +250,7 @@ export function updateContract(id, sections) {
 }
 
 export function regenerateContract(projectId) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'contract.edit');
   const prop = acceptedProposal(p.id);
   if (!prop) throw new UserError(t('A contract is generated once the client accepts a proposal.'));
   const cur = projectContract(p.id);
@@ -264,6 +270,7 @@ function fingerprint(obj) {
 export function portalContract(projectId, token) { portalProject(projectId, token); return projectContract(projectId); }
 export function portalAcceptContract(projectId, token, { name, agree }) {
   const p = portalProject(projectId, token);
+  portalGuard(p, 'contract.accept');
   const c = projectContract(projectId);
   if (!c || c.status !== 'sent') throw new UserError(t('There is no contract waiting for acceptance.'));
   if (!agree) throw new UserError(t('Please confirm you have read and agree to the terms.'), 'agree');
@@ -289,7 +296,7 @@ export function portalAcceptContract(projectId, token, { name, agree }) {
 export const listChangeOrders = (projectId) => db.all('changeOrders', (c) => c.projectId === projectId).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
 
 export function createChangeOrder(projectId, data) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'scope.edit');
   if (!acceptedProposal(p.id)) throw new UserError(t('Change orders apply once a proposal has been accepted. Edit the proposal instead.'));
   if (['completed', 'cancelled'].includes(p.status)) throw new UserError(t('This project is closed.'));
   const roundId = data.revisionRoundId || null;
@@ -307,13 +314,14 @@ export function createChangeOrder(projectId, data) {
   return co;
 }
 export function withdrawChangeOrder(id) {
-  const co = requireOwned('changeOrders', id, 'change order');
+  const co = requireOwned('changeOrders', id, 'change order', 'scope.edit');
   if (co.status !== 'pending') throw new UserError(t('Only pending change orders can be withdrawn.'));
   db.remove('changeOrders', id);
   logActivity(db.get('projects', co.projectId), freelancerActor(), 'change_order.withdrawn', 'Change order "{title}" withdrawn', { title: co.title });
 }
 export function portalRespondChangeOrder(projectId, token, id, { decision, name }) {
   const p = portalProject(projectId, token);
+  portalGuard(p, 'changes.respond');
   const co = db.get('changeOrders', id);
   if (!co || co.projectId !== p.id || co.status !== 'pending') throw new UserError(t('This change order is no longer open.'));
   const signer = req(name, 'Your name', 'name', 120);

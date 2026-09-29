@@ -3,7 +3,7 @@ import { db, blobs } from '../core/store.js';
 import { mailer, appLink } from '../core/mailer.js';
 import { t, tl } from '../core/i18n.js';
 import { UserError, ForbiddenError, req, opt, dateStr, uid, nowISO, todayISO, addDays, clock, fmtTimecode } from '../core/util.js';
-import { myBusiness, requireProject, requireOwned, logActivity, freelancerActor, clientActor, notifyOwner, portalProject, touchClient, clientLang } from './context.js';
+import { myBusiness, requireProject, requireOwned, logActivity, freelancerActor, clientActor, notifyOwner, notifyClientSide, portalProject, portalGuard, touchClient, clientLang, can, access } from './context.js';
 import { financials, createProject } from './core.js';
 import { insertInvoice, lineText } from './billing.js';
 import { FOLDERS, CLIENT_FOLDERS } from './constants.js';
@@ -13,6 +13,7 @@ const clientOf = (p) => db.get('clients', p.clientId);
 const folderLabel = (id) => FOLDERS.find((f) => f.id === id)?.label || id;
 // Emails to the client, in the client's language.
 function mailClient(p, { subject, body, vars = {}, message = '', section, linkLabel }) {
+  notifyClientSide(p, { type: 'action', title: subject, body, vars, section });
   const c = clientOf(p);
   if (!c?.email) return;
   const L = clientLang(p);
@@ -35,7 +36,7 @@ export function listFiles(projectId, { folder } = {}) {
 }
 export function listAllFiles() {
   const b = myBusiness();
-  return db.all('files', (f) => f.businessId === b.id).map((f) => ({ ...f, latest: latestVersion(f.id), versions: versionsOf(f.id) }))
+  return db.all('files', (f) => f.businessId === b.id && can(db.get('projects', f.projectId), 'files.view')).map((f) => ({ ...f, latest: latestVersion(f.id), versions: versionsOf(f.id) }))
     .sort((a, z) => (z.latest?.createdAt || '').localeCompare(a.latest?.createdAt || ''));
 }
 
@@ -74,12 +75,12 @@ async function storeVersion(project, fileRow, file, { uploaderType, uploaderName
 }
 
 export async function uploadFile(projectId, { folder, file, fileId, onProgress, confirmFinalOverwrite = false, note }) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'files.upload');
   if (!fileId && !FOLDERS.some((f) => f.id === folder)) throw new UserError(t('Choose a folder.'));
   if (!file) throw new UserError(t('Choose a file to upload.'));
   let fileRow;
   if (fileId) {
-    fileRow = requireOwned('files', fileId, 'file');
+    fileRow = requireOwned('files', fileId, 'file', 'files.upload');
     const last = latestVersion(fileId);
     if (last?.isFinal && !confirmFinalOverwrite) throw new UserError(t('The latest version is marked Final. Confirm that you want to add a new version on top of it.'));
   } else {
@@ -93,18 +94,18 @@ export async function uploadFile(projectId, { folder, file, fileId, onProgress, 
 }
 
 export function renameFile(fileId, name) {
-  const f = requireOwned('files', fileId, 'file');
+  const f = requireOwned('files', fileId, 'file', 'files.upload');
   const clean = req(name, 'File name', 'name', 120);
   db.update('files', fileId, { name: clean });
   logActivity(db.get('projects', f.projectId), freelancerActor(), 'file.renamed', 'File renamed from "{from}" to "{to}"', { from: f.name, to: clean });
 }
 export function moveFile(fileId, folder) {
-  requireOwned('files', fileId, 'file');
+  requireOwned('files', fileId, 'file', 'files.upload');
   if (!FOLDERS.some((x) => x.id === folder)) throw new UserError(t('Choose a folder.'));
   db.update('files', fileId, { folder });
 }
 export async function deleteFile(fileId, { confirmFinal = false } = {}) {
-  const f = requireOwned('files', fileId, 'file');
+  const f = requireOwned('files', fileId, 'file', 'files.upload');
   const vs = versionsOf(fileId);
   if (vs.some((v) => v.isFinal) && !confirmFinal) throw new UserError(t('This file has a Final version. Confirm to delete it.'));
   if (db.find('approvals', (a) => vs.some((v) => v.id === a.fileVersionId) && a.status === 'approved')) throw new UserError(t('This file has an approved version. Approved work is kept as part of the project record.'));
@@ -113,7 +114,7 @@ export async function deleteFile(fileId, { confirmFinal = false } = {}) {
   logActivity(db.get('projects', f.projectId), freelancerActor(), 'file.deleted', 'File "{file}" deleted', { file: f.name });
 }
 export function markFinal(versionId) {
-  const v = requireOwned('fileVersions', versionId, 'file version');
+  const v = requireOwned('fileVersions', versionId, 'file version', 'files.upload');
   versionsOf(v.fileId).filter((x) => x.isFinal).forEach((x) => db.update('fileVersions', x.id, { isFinal: false, label: labelFor(x.number) }));
   db.update('fileVersions', versionId, { isFinal: true, label: 'Final' });
   const f = db.get('files', v.fileId);
@@ -121,7 +122,7 @@ export function markFinal(versionId) {
 }
 
 export function sendForReview(fileId, message = '') {
-  const f = requireOwned('files', fileId, 'file');
+  const f = requireOwned('files', fileId, 'file', 'files.upload');
   const p = db.get('projects', f.projectId);
   if (!['active', 'in_review', 'revision_requested'].includes(p.status)) {
     throw new UserError(p.status === 'awaiting_deposit' ? t('Work starts once the deposit is received.') : t('Drafts can be shared for review while the project is active.'));
@@ -142,11 +143,12 @@ export function sendForReview(fileId, message = '') {
 export async function blobURLFor(versionId, { projectId, token } = {}) {
   const v = db.get('fileVersions', versionId);
   if (!v) throw new UserError(t('File not found.'));
-  if (token) {
-    const p = portalProject(projectId, token);
-    const f = db.get('files', v.fileId);
+  const f = db.get('files', v.fileId);
+  const side = access(db.get('projects', f?.projectId))?.side;
+  if (token || side === 'client') {
+    const p = portalProject(projectId || f.projectId, token);
     if (f.projectId !== p.id || !portalCanSee(p, f)) throw new ForbiddenError(t('This file is not shared with you.'));
-  } else requireOwned('files', v.fileId, 'file');
+  } else requireProject(f.projectId, 'files.view');
   const blob = await blobs.get(v.blobId);
   if (!blob) throw new UserError(t('The file content is missing from this device.'));
   return URL.createObjectURL(blob);
@@ -168,6 +170,7 @@ export function portalFiles(projectId, token) {
 }
 export async function portalUpload(projectId, token, file, { onProgress, name }) {
   const p = portalProject(projectId, token);
+  portalGuard(p, 'files.upload');
   if (!file) throw new UserError(t('Choose a file to upload.'));
   const base = file.name.replace(/\.[^.]+$/, '').slice(0, 120) || 'Untitled';
   const fileRow = db.insert('files', { projectId: p.id, businessId: p.businessId, folder: 'brand', name: base, uploadedBy: 'client', sharedAt: nowISO() });
@@ -218,12 +221,13 @@ function feedbackRow(p, data, authorType, authorName) {
   return { projectId: p.id, fileId: v?.fileId || null, fileVersionId: v?.id || null, authorType, authorName, status: 'open', revisionRoundId: null, parentId: null, ...cleanFeedback(data), _version: v };
 }
 export function addFeedback(projectId, data) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'feedback.write');
   const { _version, ...row } = feedbackRow(p, data, 'freelancer', freelancerActor().name);
   return db.insert('feedback', row);
 }
 export function portalAddFeedback(projectId, token, data) {
   const p = portalProject(projectId, token);
+  portalGuard(p, 'feedback.write');
   if (['completed', 'cancelled'].includes(p.status)) throw new UserError(t('This project is closed.'));
   const actor = clientActor(p, data.name);
   const { _version: v, ...row } = feedbackRow(p, data, 'client', actor.name);
@@ -240,7 +244,7 @@ export function portalAddFeedback(projectId, token, data) {
   return fb;
 }
 export function setFeedbackStatus(id, status) {
-  const fb = requireOwned('feedback', id, 'feedback');
+  const fb = requireOwned('feedback', id, 'feedback', 'feedback.write');
   if (!['open', 'resolved'].includes(status)) throw new UserError(t('Unknown status.'));
   const root = fb.parentId ? db.get('feedback', fb.parentId) : fb;
   // Resolving acts on the whole thread.
@@ -268,6 +272,7 @@ function openRound(p, actor, summary, loggedByFreelancer = false) {
 }
 export function portalRequestRevision(projectId, token, { summary, name }) {
   const p = portalProject(projectId, token);
+  portalGuard(p, 'revisions.request');
   if (!['in_review', 'awaiting_approval'].includes(p.status)) throw new UserError(t('Revisions can be requested once a version has been shared for review.'));
   req(summary, 'What should change', 'summary', 3000);
   if (p.status === 'awaiting_approval') {
@@ -277,12 +282,12 @@ export function portalRequestRevision(projectId, token, { summary, name }) {
   return openRound(p, clientActor(p, name), summary);
 }
 export function logRevisionRequest(projectId, summary) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'revisions.manage');
   if (!['in_review', 'awaiting_approval', 'active'].includes(p.status)) throw new UserError(t('Revisions can be logged once a version has been shared for review.'));
   return openRound(p, freelancerActor(), req(summary, 'Summary', 'summary', 3000), true);
 }
 export function startRound(id) {
-  const r = requireOwned('revisionRounds', id, 'revision round');
+  const r = requireOwned('revisionRounds', id, 'revision round', 'revisions.manage');
   if (r.status !== 'requested') throw new UserError(t('This round has already started.'));
   db.update('revisionRounds', id, { status: 'in_progress' });
   logActivity(db.get('projects', r.projectId), freelancerActor(), 'revision.started', 'Started work on revision {n}', { n: r.number });
@@ -291,7 +296,7 @@ export function startRound(id) {
 // ---------- Approvals ----------
 export const listApprovals = (projectId) => db.all('approvals', (a) => a.projectId === projectId).sort((a, z) => z.createdAt.localeCompare(a.createdAt));
 export function requestApproval(projectId, { fileVersionId, message }) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'approvals.request');
   if (!['active', 'in_review', 'revision_requested'].includes(p.status)) throw new UserError(t('Final approval can be requested while the project is active or in review.'));
   if (db.find('approvals', (a) => a.projectId === p.id && a.status === 'pending')) throw new UserError(t('An approval request is already waiting for the client.'));
   const v = versionFor(p, fileVersionId);
@@ -308,7 +313,7 @@ export function requestApproval(projectId, { fileVersionId, message }) {
   return a;
 }
 export function withdrawApproval(id) {
-  const a = requireOwned('approvals', id, 'approval');
+  const a = requireOwned('approvals', id, 'approval', 'approvals.request');
   if (a.status !== 'pending') throw new UserError(t('Only pending approvals can be withdrawn.'));
   db.update('approvals', id, { status: 'withdrawn', respondedAt: nowISO() });
   const p = db.get('projects', a.projectId);
@@ -317,6 +322,7 @@ export function withdrawApproval(id) {
 }
 export function portalRespondApproval(projectId, token, approvalId, { decision, name, note }) {
   const p = portalProject(projectId, token);
+  portalGuard(p, 'approvals.respond');
   const a = db.get('approvals', approvalId);
   if (!a || a.projectId !== p.id || a.status !== 'pending') throw new UserError(t('This approval request is no longer open.'));
   const signer = req(name, 'Your name', 'name', 120);
@@ -337,7 +343,7 @@ export function portalRespondApproval(projectId, token, approvalId, { decision, 
 
 // ---------- Delivery & completion ----------
 export function deliverFinal(projectId, message = '') {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'delivery.manage');
   if (p.status !== 'approved') throw new UserError(t('Final files are delivered after the client approves the final version.'));
   const files = db.all('files', (f) => f.projectId === p.id && f.folder === 'deliverables');
   if (!files.length) throw new UserError(t('Upload the final files to "06 Deliverables" first.'));
@@ -356,7 +362,7 @@ export function deliverFinal(projectId, message = '') {
 }
 
 export function completeProject(projectId, { force = false } = {}) {
-  const p = requireProject(projectId);
+  const p = requireProject(projectId, 'delivery.manage');
   if (p.status !== 'approved') throw new UserError(t('A project can be completed after final approval.'));
   if (!p.deliveredAt && !force) throw new UserError(t('Final files have not been delivered yet.'));
   const f = financials(p);
