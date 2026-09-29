@@ -69,12 +69,6 @@ const SECTIONS = [
     C({ en: 'Protect your scope', ar: 'احمِ نطاقك' }, { en: 'Anything outside the agreement becomes a change order. Keep communication inside the project so the record stays complete.', ar: 'أي شيء خارج الاتفاق يصبح طلب تغيير. وأبقِ التواصل داخل المشروع ليبقى السجل كاملًا.' }),
     C({ en: 'Every day', ar: 'كل يوم' }, { en: 'Start at "Needs your attention", check the calendar weekly, use Ctrl/Cmd + K for everything.', ar: 'ابدأ من "بحاجة إلى انتباهك"، وراجع التقويم أسبوعيًا، واستخدم Ctrl/Cmd + K لكل شيء.' }),
     C({ en: 'For organizations', ar: 'للمؤسسات' }, { en: 'Give the least access that works, keep Finance as its own role, name one project owner and one approver on the client side, and review the Team tab regularly.', ar: 'امنح أقل صلاحية تكفي، واجعل المالية دورًا مستقلًا، وسمِّ مالكًا واحدًا للمشروع ومعتمِدًا واحدًا من جهة العميل، وراجع تبويب الفريق دوريًا.' }),
-    C({ en: 'Back up', ar: 'النسخ الاحتياطي' }, { en: 'Data lives in this browser. Export it from Settings regularly.', ar: 'البيانات محفوظة في هذا المتصفح. صدّرها من الإعدادات بانتظام.' }),
-  ]),
-  S('limits', 'clock', { en: 'Good to know', ar: 'للعلم' }, { en: 'What this version does and does not do.', ar: 'ما تفعله هذه النسخة وما لا تفعله.' }, [
-    C({ en: 'Local only', ar: 'محلية فقط' }, { en: 'There is no server yet: no sync between devices, no real email (messages appear in the development mailbox), and client links open in the browser that created the project.', ar: 'لا يوجد خادم بعد: لا مزامنة بين الأجهزة ولا بريد حقيقي (الرسائل تظهر في الصندوق التجريبي)، وروابط العميل تفتح في المتصفح الذي أُنشئ فيه المشروع.' }),
-    C({ en: 'Payments', ar: 'المدفوعات' }, { en: 'Payments are recorded manually or reported by the client. Online payment is not connected.', ar: 'تُسجَّل الدفعات يدويًا أو يبلّغ بها العميل. والدفع الإلكتروني غير موصول.' }),
-    C({ en: 'Next step', ar: 'الخطوة التالية' }, { en: 'For real use across companies, add a backend with a database and real email.', ar: 'للاستخدام الفعلي بين الشركات يلزم خادم وقاعدة بيانات وبريد حقيقي.' }),
   ]),
 ];
 
