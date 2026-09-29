@@ -5,7 +5,7 @@ import { db } from '../core/store.js';
 import { auth } from '../core/auth.js';
 import { t, normLang } from '../core/i18n.js';
 import { fmtMoney, fmtDate, fmtShortDate, fmtDateTime, fmtRelative, fmtTimecode } from '../core/util.js';
-import { portalProject, canAccessProject, activityText, clientLang } from '../services/context.js';
+import { portalProject, canAccessProject, activityText, clientLang, access } from '../services/context.js';
 import { financials, listDeliverables, proposalTotal, invoiceTotals } from '../services/core.js';
 import { getBrief, portalSubmitBrief, portalProposal, portalViewProposal, portalRespondProposal, portalContract, portalAcceptContract, listChangeOrders, portalRespondChangeOrder } from '../services/workflow.js';
 import { portalInvoices, portalViewInvoice, portalReportPayment } from '../services/billing.js';
@@ -20,6 +20,11 @@ const CLIENT_STATUS = {
   in_review: { label: 'Ready for your review', tone: 'blue' }, revision_requested: { label: 'Revising', tone: 'amber' }, awaiting_approval: { label: 'Awaiting your approval', tone: 'blue' },
   approved: { label: 'Approved', tone: 'green' }, completed: { label: 'Completed', tone: 'ink' }, cancelled: { label: 'Cancelled', tone: 'red' },
 };
+// Guests (secure link) act as the client. Signed-in members of the client
+// organization see the same screens, limited by their project role.
+const may = (ctx, cap) => !ctx.acc || ctx.acc.caps.has(cap);
+const SECTION_CAP = { overview: 'project.view', brief: 'brief.view', proposal: 'proposal.view', contract: 'contract.view', scope: 'scope.view', files: 'files.view', feedback: 'feedback.view', revisions: 'revisions.view', approval: 'approvals.view', invoice: 'finance.view' };
+const plink = (pid, tk, s = '') => (tk ? `/client/${pid}${s ? `/${s}` : ''}?t=${tk}` : `/projects/${pid}${s ? `/${s}` : ''}`);
 const SECTIONS = [['overview', 'Overview'], ['brief', 'Brief'], ['proposal', 'Proposal'], ['contract', 'Contract'], ['scope', 'Scope'], ['files', 'Files'], ['feedback', 'Feedback'], ['revisions', 'Revisions'], ['approval', 'Approval'], ['invoice', 'Invoices']];
 let rememberedName = '';
 const store = {
@@ -67,23 +72,40 @@ export function portal(params, q) {
     </div></div>`;
 }
 
-// What the client needs to do, in order.
-function todos({ p, token }) {
+// The client side of a shared project, inside the app (signed-in members).
+export const clientSections = (p) => { const acc = access(p); return SECTIONS.filter(([id]) => acc?.caps.has(SECTION_CAP[id])); };
+export function clientContext(p) {
+  const u = auth.currentUser();
+  return { p, b: db.get('businesses', p.businessId), c: db.get('clients', p.clientId), token: '', link: (s) => `/projects/${p.id}/${s}`, name: u?.name || '', acc: access(p), embedded: true };
+}
+export function clientSectionView(ctx, section) {
+  const views = { overview, brief, proposal, contract, scope, files, feedback, revisions, approval, invoice };
+  const todo = todos(ctx);
+  return { todo, body: views[section](ctx, todo) };
+}
+
+// What the client needs to do, in order (only what this person can act on).
+function todos(ctx) {
+  const { p, token } = ctx;
+  const all = rawTodos(p, token);
+  return all.filter((x) => may(ctx, x.cap));
+}
+function rawTodos(p, token) {
   const out = [];
   const brief = getBrief(p.id);
-  if (brief?.status === 'sent') out.push({ section: 'brief', title: t('Complete the project brief'), body: t('A few questions so the proposal fits exactly.'), cta: t('Complete brief') });
+  if (brief?.status === 'sent') out.push({ section: 'brief', cap: 'brief.submit', title: t('Complete the project brief'), body: t('A few questions so the proposal fits exactly.'), cta: t('Complete brief') });
   const prop = portalProposal(p.id, token);
-  if (prop && ['sent', 'viewed'].includes(prop.status)) out.push({ section: 'proposal', title: t('Review the proposal'), body: t('{amount} · valid until {date}', { amount: fmtMoney(proposalTotal(prop.id), prop.currency), date: fmtDate(prop.validUntil) }), cta: t('View proposal') });
+  if (prop && ['sent', 'viewed'].includes(prop.status)) out.push({ section: 'proposal', cap: 'proposal.respond', title: t('Review the proposal'), body: t('{amount} · valid until {date}', { amount: fmtMoney(proposalTotal(prop.id), prop.currency), date: fmtDate(prop.validUntil) }), cta: t('View proposal') });
   const con = portalContract(p.id, token);
-  if (con?.status === 'sent') out.push({ section: 'contract', title: t('Accept the contract'), body: t('Review and accept the service agreement to get started.'), cta: t('Review contract') });
-  listChangeOrders(p.id).filter((x) => x.status === 'pending').forEach((co) => out.push({ section: 'scope', title: t('Approve change: {title}', { title: co.title }), body: t('+{amount} — only added if you approve.', { amount: fmtMoney(co.amount, p.currency) }), cta: t('Review change') }));
+  if (con?.status === 'sent') out.push({ section: 'contract', cap: 'contract.accept', title: t('Accept the contract'), body: t('Review and accept the service agreement to get started.'), cta: t('Review contract') });
+  listChangeOrders(p.id).filter((x) => x.status === 'pending').forEach((co) => out.push({ section: 'scope', cap: 'changes.respond', title: t('Approve change: {title}', { title: co.title }), body: t('+{amount} — only added if you approve.', { amount: fmtMoney(co.amount, p.currency) }), cta: t('Review change') }));
   portalInvoices(p.id, token).filter((i) => ['sent', 'viewed', 'partially_paid', 'overdue'].includes(i.status)).forEach((i) => {
     const reported = db.find('payments', (x) => x.invoiceId === i.id && x.status === 'reported');
-    if (!reported) out.push({ section: 'invoice', title: t(i.kind === 'deposit' ? 'Pay the deposit {number}' : 'Pay invoice {number}', { number: i.number }), body: t('{amount} due {date}', { amount: fmtMoney(invoiceTotals(i.id).balance, i.currency), date: fmtDate(i.dueDate) }), cta: t('View invoice'), id: i.id });
+    if (!reported) out.push({ section: 'invoice', cap: 'finance.pay', title: t(i.kind === 'deposit' ? 'Pay the deposit {number}' : 'Pay invoice {number}', { number: i.number }), body: t('{amount} due {date}', { amount: fmtMoney(invoiceTotals(i.id).balance, i.currency), date: fmtDate(i.dueDate) }), cta: t('View invoice'), id: i.id });
   });
-  if (listApprovals(p.id).some((a) => a.status === 'pending')) out.push({ section: 'approval', title: t('Final approval required'), body: t('This version is ready for final approval.'), cta: t('Review & approve') });
-  if (p.status === 'in_review') out.push({ section: 'files', title: t('A new version is ready for review'), body: t('Leave comments, or request a revision.'), cta: t('Review files') });
-  if (p.deliveredAt && ['approved', 'completed'].includes(p.status) && !deliveryLocked(p)) out.push({ section: 'files', title: t('Your final files are ready'), body: t('Download everything from Deliverables.'), cta: t('Download'), done: true });
+  if (listApprovals(p.id).some((a) => a.status === 'pending')) out.push({ section: 'approval', cap: 'approvals.respond', title: t('Final approval required'), body: t('This version is ready for final approval.'), cta: t('Review & approve') });
+  if (p.status === 'in_review') out.push({ section: 'files', cap: 'feedback.write', title: t('A new version is ready for review'), body: t('Leave comments, or request a revision.'), cta: t('Review files') });
+  if (p.deliveredAt && ['approved', 'completed'].includes(p.status) && !deliveryLocked(p)) out.push({ section: 'files', cap: 'files.view', title: t('Your final files are ready'), body: t('Download everything from Deliverables.'), cta: t('Download'), done: true });
   return out;
 }
 
@@ -91,18 +113,19 @@ const HIDDEN_ACTIONS = ['file.renamed', 'scope.updated', 'brief.updated', 'contr
 function overview(ctx, todo) {
   const { p, link } = ctx;
   const f = financials(p);
-  const acts = db.all('activityLogs', (a) => a.projectId === p.id && !HIDDEN_ACTIONS.includes(a.action)).sort((a, z) => z.createdAt.localeCompare(a.createdAt)).slice(0, 8);
+  const acts = db.all('activityLogs', (a) => a.projectId === p.id && !HIDDEN_ACTIONS.includes(a.action) && (may(ctx, 'finance.view') || !/^(invoice|payment|deposit)\./.test(a.action))).sort((a, z) => z.createdAt.localeCompare(a.createdAt)).slice(0, 8);
   return html`<div class="stack">
     ${todo.length ? todo.map((x, i) => html`<div class="cta-card${i === 0 && !x.done ? ' attention' : ''}"><div><div class="eyebrow" style="margin-bottom:4px">${x.done ? t('Ready') : i === 0 ? t('Needed from you') : t('Also waiting')}</div><h2>${x.title}</h2><p class="muted" style="margin:4px 0 0">${x.body}</p></div><a class="btn btn-primary btn-lg" href="${href(link(x.section))}">${x.cta} ${icon('arrow', 16)}</a></div>`)
       : html`<div class="cta-card"><h2>${t('Nothing needed from you right now')}</h2><p class="muted" style="margin:0">${t("We'll email you when there's something to review.")}</p></div>`}
-    ${f.contracted ? html`<div class="pay-grid"><div><span>${t('Project total')}</span><b>${fmtMoney(f.total, p.currency)}</b></div><div><span>${t('Paid::label')}</span><b>${fmtMoney(f.paid, p.currency)}</b></div><div><span>${t('Remaining')}</span><b>${fmtMoney(f.balance, p.currency)}</b></div></div>` : ''}
+    ${f.contracted && may(ctx, 'finance.view') ? html`<div class="pay-grid"><div><span>${t('Project total')}</span><b>${fmtMoney(f.total, p.currency)}</b></div><div><span>${t('Paid::label')}</span><b>${fmtMoney(f.paid, p.currency)}</b></div><div><span>${t('Remaining')}</span><b>${fmtMoney(f.balance, p.currency)}</b></div></div>` : ''}
     ${acts.length ? html`<div class="card"><h2 style="margin-bottom:8px">${t('Recent updates')}</h2><ul class="timeline">${acts.map((a) => html`<li><time>${fmtShortDate(a.createdAt)}</time><div>${activityText(a)}</div></li>`)}</ul></div>` : ''}
   </div>`;
 }
 
-function brief({ p, token }) {
+function brief(ctx) {
+  const { p, token } = ctx;
   const b = getBrief(p.id);
-  if (b.status !== 'sent') {
+  if (b.status !== 'sent' || !may(ctx, 'brief.submit')) {
     return b.objective ? html`<div class="card"><dl class="kv">${[['Objective', b.objective], ['Audience', b.audience], ['Deliverables', b.deliverablesText], ['Platforms', b.platforms], ['Tone', b.tone], ['References', b.references], ['Notes', b.notes]].filter(([, v]) => v).map(([k, v]) => html`<dt>${t(k)}</dt><dd class="prose">${v}</dd>`)}</dl>${b.status === 'submitted' ? html`<p class="small muted" style="margin:12px 0 0">${t('Submitted {when}. Thank you!', { when: fmtRelative(b.submittedAt) })}</p>` : ''}</div>`
       : empty({ title: t('No brief yet'), body: t('Your freelancer will share the brief with you if they need details.') });
   }
@@ -120,33 +143,36 @@ function brief({ p, token }) {
     <div class="sticky-actions full"><button class="btn btn-primary btn-lg" type="submit">${t('Submit brief')}</button></div></form>`;
 }
 
-function proposal({ p, token, name }) {
+function proposal(ctx) {
+  const { p, token, name, link } = ctx;
   const prop = portalProposal(p.id, token);
   if (!prop) return empty({ title: t('No proposal yet'), body: t("You'll get an email when the proposal is ready.") });
   if (prop.status === 'sent') portalViewProposal(p.id, token);
   const open = ['sent', 'viewed'].includes(prop.status);
-  return html`${prop.status === 'accepted' ? html`<div class="notice notice-ok" style="margin-bottom:16px">${t('✓ You accepted this proposal on {date}.', { date: fmtDate(prop.respondedAt) })} <a href="${href(`/client/${p.id}/contract?t=${token}`)}">${t('Proceed to contract')} →</a></div>` : ''}
+  return html`${prop.status === 'accepted' ? html`<div class="notice notice-ok" style="margin-bottom:16px">${t('✓ You accepted this proposal on {date}.', { date: fmtDate(prop.respondedAt) })} <a href="${href(link('contract'))}">${t('Proceed to contract')} →</a></div>` : ''}
     ${prop.status === 'rejected' ? html`<div class="notice" style="margin-bottom:16px">${t('You declined this proposal. Your freelancer may send a revised version.')}</div>` : ''}
     ${prop.status === 'expired' ? html`<div class="notice notice-warn" style="margin-bottom:16px">${t('This proposal has expired. Please ask for an updated version.')}</div>` : ''}
     ${proposalDoc(prop)}
-    ${open ? html`<form class="sticky-actions" data-form="portal-proposal" style="flex-direction:column;align-items:stretch">
+    ${open && may(ctx, 'proposal.respond') ? html`<form class="sticky-actions" data-form="portal-proposal" style="flex-direction:column;align-items:stretch">
       <input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}">
       <div class="btn-row" style="flex-wrap:nowrap"><input name="name" value="${name}" placeholder="${t('Your full name')}" aria-label="${t('Your full name')}" required></div>
       <div class="btn-row"><button class="btn btn-primary btn-lg" type="submit" name="decision" value="accept">${t('Accept Proposal')}</button><button class="btn btn-secondary btn-lg" type="submit" name="decision" value="decline">${t('Decline')}</button></div></form>` : ''}`;
 }
 
-function contract({ p, token, name }) {
+function contract(ctx) {
+  const { p, token, name } = ctx;
   const c = portalContract(p.id, token);
   if (!c) return empty({ title: t('No contract yet'), body: t('The contract is prepared once you accept the proposal.') });
   return html`${contractDoc(c, p)}
-    ${c.status === 'sent' ? html`<form class="sticky-actions" data-form="portal-contract" style="flex-direction:column;align-items:stretch">
+    ${c.status === 'sent' && may(ctx, 'contract.accept') ? html`<form class="sticky-actions" data-form="portal-contract" style="flex-direction:column;align-items:stretch">
       <input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}">
       <label class="check"><input type="checkbox" name="agree" data-bool required> ${t('I have read and agree to these terms.')}</label>
       <input name="name" value="${name}" placeholder="${t('Your full name')}" aria-label="${t('Your full name')}" required>
       <button class="btn btn-primary btn-lg" type="submit">${t('Accept Contract')}</button></form>` : ''}`;
 }
 
-function scope({ p, token, name }) {
+function scope(ctx) {
+  const { p, token, name } = ctx;
   const del = listDeliverables(p.id);
   const cos = listChangeOrders(p.id);
   return html`<div class="scope-cols">
@@ -156,7 +182,7 @@ function scope({ p, token, name }) {
       <div class="btn-row" style="justify-content:space-between"><h2 style="font-size:22px">${co.title}</h2>${pill(CO_STATUSES, co.status)}</div>
       ${co.description ? html`<p class="muted" style="margin:0">${co.description}</p>` : ''}
       <div class="big-figure" style="font-size:32px">+${fmtMoney(co.amount, p.currency)}</div>${co.extraDays ? html`<p class="small muted" style="margin:0">${t('Adds {n} day(s) to the timeline.', { n: co.extraDays })}</p>` : ''}
-      ${co.status === 'pending' ? html`<form data-form="portal-co" class="form-stack" style="gap:10px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}"><input type="hidden" name="id" value="${co.id}">
+      ${co.status === 'pending' && !may(ctx, 'changes.respond') ? html`<p class="small muted" style="margin:0">${t('Waiting for a decision from your approver.')}</p>` : co.status === 'pending' ? html`<form data-form="portal-co" class="form-stack" style="gap:10px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}"><input type="hidden" name="id" value="${co.id}">
         <input name="name" value="${name}" placeholder="${t('Your full name')}" aria-label="${t('Your full name')}" required>
         <div class="btn-row"><button class="btn btn-primary btn-lg" type="submit" name="decision" value="approve">${t('Approve')}</button><button class="btn btn-secondary btn-lg" type="submit" name="decision" value="decline">${t('Decline')}</button></div></form>`
         : html`<p class="small muted" style="margin:0">${t(co.status === 'approved' ? 'Approved by {name} · {date}' : 'Declined by {name} · {date}', { name: co.respondedByName, date: fmtDate(co.respondedAt) })}</p>`}</div>`)}</div></div>` : ''}`;
@@ -169,38 +195,41 @@ function files(ctx) {
   const locked = p.deliveredAt && deliveryLocked(p);
   const groups = FOLDERS.filter((f) => list.some((x) => x.folder === f.id));
   const vctx = { projectId: p.id, token };
-  return html`${locked ? html`<div class="notice notice-warn" style="margin-bottom:16px">${t('Your final files are ready and will unlock for download once the final invoice is paid.')} <a href="${href(`/client/${p.id}/invoice?t=${token}`)}">${t('View invoice')}</a></div>` : ''}
+  return html`${locked ? html`<div class="notice notice-warn" style="margin-bottom:16px">${t('Your final files are ready and will unlock for download once the final invoice is paid.')} <a href="${href(ctx.link('invoice'))}">${t('View invoice')}</a></div>` : ''}
     ${groups.map((g) => html`<div class="section-head" style="margin-top:8px"><h2>${t(GROUP_TITLES[g.id] || g.label)}</h2></div>
       <div class="list" style="margin-bottom:20px">${list.filter((f) => f.folder === g.id).map((f) => html`<div class="file-row">${thumb(f.latest, vctx)}
         <div style="min-width:0"><div class="cell-title">${f.name} <span class="muted small">${verLabel(f.latest)}</span></div><div class="cell-sub">${fmtRelative(f.latest.createdAt)}</div></div>
         <div class="btn-row">${g.id !== 'deliverables' && g.id !== 'brand' ? html`<button class="btn btn-secondary btn-sm" data-action="portal-view" data-id="${f.latest.id}" data-pid="${p.id}" data-t="${token}">${t('Review')}</button>` : ''}
           <button class="btn ${g.id === 'deliverables' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-action="portal-download" data-id="${f.latest.id}" data-pid="${p.id}" data-t="${token}">${icon('download', 14)} ${t('Download')}</button></div></div>`)}</div>`)}
     ${!list.length ? empty({ title: t('No files yet'), body: t('Drafts for review and final files will appear here.') }) : ''}
-    <form class="card form-stack" data-form="portal-upload" style="margin-top:8px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}">
+    ${may(ctx, 'files.upload') ? html`<form class="card form-stack" data-form="portal-upload" style="margin-top:8px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}">
       <h2>${t('Share brand assets')}</h2><p class="muted small" style="margin:0">${t('Logos, guidelines, photos or references for the project.')}</p>
       <input type="file" name="files" multiple aria-label="${t('Files to upload')}"><div class="upload-progress" hidden><span></span></div>
-      <div><button class="btn btn-secondary" type="submit">${icon('upload', 16)} ${t('Upload')}</button></div></form>`;
+      <div><button class="btn btn-secondary" type="submit">${icon('upload', 16)} ${t('Upload')}</button></div></form>` : ''}`;
 }
 
-function feedback({ p, token, name }) {
+function feedback(ctx) {
+  const { p, token, name, link } = ctx;
   const list = listFeedback(p.id);
   const canRequest = ['in_review', 'awaiting_approval'].includes(p.status);
   const closed = ['completed', 'cancelled'].includes(p.status);
   const general = list.filter((c) => !c.fileVersionId);
   const byVersion = new Map();
   list.filter((c) => c.fileVersionId).forEach((c) => { if (!byVersion.has(c.fileVersionId)) byVersion.set(c.fileVersionId, []); byVersion.get(c.fileVersionId).push(c); });
-  const cctx = { token, name };
-  return html`${canRequest ? html`<div class="notice" style="margin-bottom:16px">${t('Tip: open a file in Files to comment at an exact moment of a video or a spot on an image.')} <a href="${href(`/client/${p.id}/files?t=${token}`)}">${t('Files')}</a></div>` : ''}
-    ${!closed ? html`<form class="card form-stack" data-form="portal-comment" style="margin-bottom:20px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}">
+  const cctx = { token, name, client: true };
+  const reply = !closed && may(ctx, 'feedback.write');
+  return html`${canRequest ? html`<div class="notice" style="margin-bottom:16px">${t('Tip: open a file in Files to comment at an exact moment of a video or a spot on an image.')} <a href="${href(link('files'))}">${t('Files')}</a></div>` : ''}
+    ${!closed && may(ctx, 'feedback.write') ? html`<form class="card form-stack" data-form="portal-comment" style="margin-bottom:20px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}">
       <h2>${t('General comment')}</h2><input name="name" value="${name}" placeholder="${t('Your name')}" aria-label="${t('Your name')}" required>
       <textarea name="comment" rows="3" placeholder="${t('Share your thoughts…')}" aria-label="${t('Comment')}" required></textarea><div><button class="btn btn-primary" type="submit">${t('Send comment')}</button></div></form>` : ''}
-    ${[...byVersion.entries()].reverse().map(([vid, items]) => { const v = db.get('fileVersions', vid); const f = v && db.get('files', v.fileId); return html`<div class="card" style="margin-bottom:12px"><div class="card-head"><h3>${f?.name || t('File')} · ${verLabel(v)}</h3>${v ? html`<button class="btn btn-ghost btn-sm" data-action="portal-view" data-id="${v.id}" data-pid="${p.id}" data-t="${token}">${icon('eye', 14)} ${t('Open viewer')}</button>` : ''}</div><div class="comments" style="max-height:none">${conversation(items, { isClient: true, ctx: cctx, canReply: !closed })}</div></div>`; })}
-    ${general.length ? html`<div class="card"><div class="card-head"><h3>${t('General comments')}</h3></div><div class="comments" style="max-height:none">${conversation(general, { isClient: true, ctx: cctx, canReply: !closed })}</div></div>` : ''}`;
+    ${[...byVersion.entries()].reverse().map(([vid, items]) => { const v = db.get('fileVersions', vid); const f = v && db.get('files', v.fileId); return html`<div class="card" style="margin-bottom:12px"><div class="card-head"><h3>${f?.name || t('File')} · ${verLabel(v)}</h3>${v ? html`<button class="btn btn-ghost btn-sm" data-action="portal-view" data-id="${v.id}" data-pid="${p.id}" data-t="${token}">${icon('eye', 14)} ${t('Open viewer')}</button>` : ''}</div><div class="comments" style="max-height:none">${conversation(items, { isClient: true, ctx: cctx, canReply: reply })}</div></div>`; })}
+    ${general.length ? html`<div class="card"><div class="card-head"><h3>${t('General comments')}</h3></div><div class="comments" style="max-height:none">${conversation(general, { isClient: true, ctx: cctx, canReply: reply })}</div></div>` : ''}`;
 }
 
-function revisions({ p, token, name }) {
+function revisions(ctx) {
+  const { p, token, name } = ctx;
   const rounds = listRounds(p.id);
-  const canRequest = ['in_review', 'awaiting_approval'].includes(p.status) && !rounds.some((r) => r.status !== 'delivered');
+  const canRequest = ['in_review', 'awaiting_approval'].includes(p.status) && !rounds.some((r) => r.status !== 'delivered') && may(ctx, 'revisions.request');
   const next = rounds.length + 1;
   const extra = next > p.revisionsIncluded;
   return html`<div class="card" style="margin-bottom:16px"><div class="muted small">${t('Revision rounds used')}</div><div class="big-figure">${rounds.length} / ${p.revisionsIncluded}</div></div>
@@ -213,7 +242,8 @@ function revisions({ p, token, name }) {
     ${rounds.length ? html`<div class="list" style="margin-top:16px">${rounds.slice().reverse().map((r) => html`<div class="list-row" style="grid-template-columns:minmax(0,1fr) auto"><div><div class="cell-title">${t('Revision {n}', { n: r.number })}${r.isExtra ? ` ${t('(additional)')}` : ''}</div><div class="small">${r.summary}</div><div class="cell-sub">${fmtDate(r.requestedAt)}</div></div><span class="pill"><span class="dot"></span>${r.status === 'delivered' ? t('Delivered') : t('In progress')}</span></div>`)}</div>` : !canRequest ? empty({ title: t('No revisions'), body: t('You can request changes once a version is shared for review.') }) : ''}`;
 }
 
-function approval({ p, token, name, link }) {
+function approval(ctx) {
+  const { p, token, name, link } = ctx;
   const list = listApprovals(p.id).filter((a) => a.status !== 'withdrawn');
   if (!list.length) return empty({ title: t('Nothing to approve yet'), body: t("When the final version is ready, you'll approve it here.") });
   const vl = (a) => (a.versionLabel === 'Final' ? t('Final') : a.versionLabel);
@@ -232,12 +262,12 @@ function approval({ p, token, name, link }) {
       <h2 id="fr-${a.id}">${a.fileName}</h2>
       <div class="file-name">${vl(a)}${a.message ? html` · ${a.message}` : ''}</div>
       ${v ? html`<button class="fr-preview" data-action="portal-view" data-id="${a.fileVersionId}" data-pid="${p.id}" data-t="${token}" aria-label="${t('View version')}">${thumb(v, vctx)}<span>${icon('eye', 16)} ${t('View version')}</span></button>` : ''}
-      <p class="question">${t('Everything looks good?')}</p>
+      ${!may(ctx, 'approvals.respond') ? html`<p class="question" style="font-size:16px">${t('Waiting for a decision from your approver.')}</p>` : html`<p class="question">${t('Everything looks good?')}</p>
       <form class="form-stack" data-form="portal-approval" style="gap:10px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}"><input type="hidden" name="id" value="${a.id}">
         <input name="name" value="${name}" placeholder="${t('Your full name')}" aria-label="${t('Your full name')}" required>
         <textarea name="note" rows="2" placeholder="${t('Changes needed (only if requesting changes)')}" aria-label="${t('Changes needed')}"></textarea>
         <div class="btn-row"><button class="btn btn-secondary btn-lg" type="submit" name="decision" value="changes">${t('Request Changes')}</button><button class="btn btn-primary btn-lg" type="submit" name="decision" value="approve">${icon('check', 18)} ${t('Approve Final')}</button></div>
-        <p class="small muted" style="margin:0">${t('Your approval is recorded with your name, the date and the version.')}</p></form></section>`; })}
+        <p class="small muted" style="margin:0">${t('Your approval is recorded with your name, the date and the version.')}</p></form>`}</section>`; })}
     ${lastApproved ? html`<section class="approved-state" role="status">
       ${checkBadge()}
       <h2>${t('Approved')}</h2>
@@ -250,7 +280,8 @@ function approval({ p, token, name, link }) {
 }
 
 const KIND_LABELS = { deposit: 'Deposit', final: 'Final payment', change_order: 'Change order', custom: 'Invoice' };
-function invoice({ p, token }) {
+function invoice(ctx) {
+  const { p, token } = ctx;
   const list = portalInvoices(p.id, token);
   if (!list.length) return empty({ title: t('No invoices yet'), body: t('Invoices will appear here when they are issued.') });
   const b = db.get('businesses', p.businessId);
@@ -263,7 +294,7 @@ function invoice({ p, token }) {
         <span><b>${t('Invoice {number}', { number: inv.number })}</b><br><span class="small muted">${t(KIND_LABELS[inv.kind] || 'Invoice')} · ${t('due {date}', { date: fmtShortDate(inv.dueDate) })}</span></span>
         <span style="text-align:end">${pill(INVOICE_STATUSES, inv.status)}<br><span class="num">${fmtMoney(tot.balance > 0 ? tot.balance : tot.total, inv.currency)}</span></span></summary>
       <div style="margin-top:16px">${invoiceDoc({ ...inv })}</div>
-      ${due ? reported ? html`<div class="notice notice-ok" style="margin-top:16px">${t('Thanks — you reported a payment of {amount}. {business} will confirm it once received.', { amount: fmtMoney(reported.amount, inv.currency), business: b.name })}</div>`
+      ${due && may(ctx, 'finance.pay') ? reported ? html`<div class="notice notice-ok" style="margin-top:16px">${t('Thanks — you reported a payment of {amount}. {business} will confirm it once received.', { amount: fmtMoney(reported.amount, inv.currency), business: b.name })}</div>`
         : html`<form class="card form-stack" data-form="portal-pay" style="margin-top:16px"><input type="hidden" name="pid" value="${p.id}"><input type="hidden" name="t" value="${token}"><input type="hidden" name="id" value="${inv.id}">
           <h2>${t('How to pay')}</h2><p class="prose muted" style="margin:0">${inv.notes || b.paymentInstructions}</p>
           <p class="small muted" style="margin:0">${t('Pay online by card')} <span class="soon">${t('Coming Soon')}</span></p>
@@ -276,7 +307,7 @@ function invoice({ p, token }) {
 // ---------------- Handlers ----------------
 const remember = (v) => { if (v.name) setName(v.pid, v.name.trim()); };
 onForm({
-  'portal-brief': (v) => { portalSubmitBrief(v.pid, v.t, v); toast(t('Thank you! Your brief was sent.')); go(`/client/${v.pid}?t=${v.t}`); return false; },
+  'portal-brief': (v) => { portalSubmitBrief(v.pid, v.t, v); toast(t('Thank you! Your brief was sent.')); go(plink(v.pid, v.t)); return false; },
   'portal-proposal': async (v, form, submitter) => {
     remember(v);
     const decision = submitter?.value;
@@ -285,10 +316,10 @@ onForm({
       portalRespondProposal(v.pid, v.t, { decision: 'decline', name: v.name }); toast(t('Proposal declined.'));
     } else {
       portalRespondProposal(v.pid, v.t, { decision: 'accept', name: v.name }); toast(t('Proposal accepted. Next: the contract.'));
-      go(`/client/${v.pid}/contract?t=${v.t}`); return false;
+      go(plink(v.pid, v.t, 'contract')); return false;
     }
   },
-  'portal-contract': (v) => { remember(v); portalAcceptContract(v.pid, v.t, v); toast(t('Contract accepted. Thank you!')); go(`/client/${v.pid}?t=${v.t}`); return false; },
+  'portal-contract': (v) => { remember(v); portalAcceptContract(v.pid, v.t, v); toast(t('Contract accepted. Thank you!')); go(plink(v.pid, v.t)); return false; },
   'portal-co': (v, form, submitter) => { remember(v); portalRespondChangeOrder(v.pid, v.t, v.id, { decision: submitter?.value, name: v.name }); toast(submitter?.value === 'approve' ? t('Change approved.') : t('Change declined.')); },
   'portal-comment': (v) => { remember(v); portalAddFeedback(v.pid, v.t, v); toast(t('Comment sent.')); },
   'portal-revision': (v) => { remember(v); portalRequestRevision(v.pid, v.t, v); toast(t('Revision requested. Your freelancer has been notified.')); },
@@ -310,7 +341,7 @@ onForm({
   },
 });
 onAction({
-  'portal-view': (el) => { openViewer(el.dataset.id, { projectId: el.dataset.pid, token: el.dataset.t, name: getName(el.dataset.pid) }); return false; },
+  'portal-view': (el) => { openViewer(el.dataset.id, { projectId: el.dataset.pid, token: el.dataset.t, client: true, name: auth.currentUser() && !el.dataset.t ? auth.currentUser().name : getName(el.dataset.pid) }); return false; },
   'portal-download': async (el) => { await download(el.dataset.id, { projectId: el.dataset.pid, token: el.dataset.t }); return false; },
   'portal-lang': (el) => { store.set(`sw.portal.lang.${el.dataset.pid}`, el.dataset.lang); },
 });

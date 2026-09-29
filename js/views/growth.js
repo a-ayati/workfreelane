@@ -1,4 +1,5 @@
 // Portfolio, analytics, AI assistant, all-files index, search and notifications.
+import { NOTIF_CATS, catOf, notifTabs, notificationItem } from './shell.js';
 import { html, raw, icon, href, empty, pageHead, field, onAction, onForm, go, toast, confirmDialog, pill, comingSoon, rerender } from '../ui.js';
 import { db } from '../core/store.js';
 import { t, lang, locale } from '../core/i18n.js';
@@ -190,15 +191,19 @@ export function searchView(_, q) {
 }
 
 // ---------------- Notifications ----------------
-export function notificationsView() {
-  const list = listNotifications();
-  return html`${pageHead({ title: t('Notifications'), actions: html`<button class="btn btn-secondary" data-action="notif-read-all">${t('Mark all read')}</button><a class="btn btn-ghost" href="${href('/settings/notifications')}">${t('Settings')}</a>` })}
-    ${list.length ? html`<div class="list">${list.map((n) => { const x = notificationText(n); return html`<a class="list-row notif${n.readAt ? '' : ' unread'}" style="grid-template-columns:minmax(0,1fr) auto" href="${href(n.link || '/notifications')}" data-action="notif-open" data-id="${n.id}" data-href="${n.link || '/notifications'}"><div><b>${x.title}</b><span>${x.body}</span></div><span class="cell-sub">${fmtRelative(n.createdAt)}</span></a>`; })}</div>`
+export function notificationsView(_, q = {}) {
+  const all = listNotifications();
+  const cat = NOTIF_CATS.some(([id]) => id === q.c) ? q.c : 'all';
+  const list = all.filter((n) => cat === 'all' || catOf(n) === cat);
+  return html`${pageHead({ title: t('Notifications'), sub: t('What happened, what is coming up, and what is waiting for you.'), actions: html`<button class="btn btn-secondary" data-action="notif-read-all">${t('Mark all read')}</button><a class="btn btn-ghost" href="${href('/settings/notifications')}">${t('Settings')}</a>` })}
+    <div style="margin-bottom:16px">${notifTabs(cat, 'notif-page-cat', all)}</div>
+    ${list.length ? html`<div class="card notif-list">${list.map(notificationItem)}</div>`
       : empty({ title: t("You're all caught up"), body: t('Client actions, overdue invoices and deadlines will show up here.') })}`;
 }
 
 // ---------------- Handlers ----------------
 onAction({
+  'notif-page-cat': (el) => { go(`/notifications${el.dataset.cat === 'all' ? '' : `?c=${el.dataset.cat}`}`); return false; },
   'pf-delete': async (el) => { if (await confirmDialog({ title: t('Delete portfolio item?'), body: t('The project and its files are not affected.'), confirm: t('Delete'), tone: 'danger' })) { deletePortfolioItem(el.dataset.id); go('/portfolio'); return false; } return false; },
   'pf-ai': async (el) => {
     const r = await runAI('caseStudy', { ctx: aiContext('caseStudy', el.dataset.project) });

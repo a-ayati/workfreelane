@@ -71,7 +71,7 @@ export function conversation(list, { isClient = false, ctx = {}, seek = false, p
         ${resolved ? html`<span class="resolved-mark">${icon('check', 13)} ${t('Resolved')}</span>` : ''}
         ${canReply && !resolved ? html`<details class="reply-toggle"><summary class="link-btn">${t('Reply')}</summary>
           <form class="reply-form" data-form="fb-reply"><input type="hidden" name="parentId" value="${c.id}"><input type="hidden" name="pid" value="${c.projectId}">
-            ${isClient ? html`<input type="hidden" name="t" value="${ctx.token}">${ctx.name ? html`<input type="hidden" name="name" value="${ctx.name}">` : html`<input name="name" placeholder="${t('Your name')}" aria-label="${t('Your name')}" required>`}` : ''}
+            ${isClient ? html`<input type="hidden" name="t" value="${ctx.token || ''}"><input type="hidden" name="c" value="1">${ctx.name ? html`<input type="hidden" name="name" value="${ctx.name}">` : html`<input name="name" placeholder="${t('Your name')}" aria-label="${t('Your name')}" required>`}` : ''}
             <input name="comment" placeholder="${t('Write a reply…')}" aria-label="${t('Reply to {name}', { name: c.authorName })}" autocomplete="off" required>
             <button class="btn btn-primary btn-sm" type="submit">${t('Send')}</button></form></details>` : ''}
         ${!isClient ? html`<button class="link-btn" data-action="fb-status" data-id="${c.id}" data-status="${resolved ? 'open' : 'resolved'}">${resolved ? t('Reopen') : t('Mark resolved')}</button>` : ''}
@@ -100,7 +100,7 @@ function renderViewer() {
   if (!v) return html`${modalHead(t('File'))}<p>${t('This file is no longer available.')}</p>`;
   const f = db.get('files', v.fileId);
   const kind = fileKind(v);
-  const isClient = !!vs.ctx.token;
+  const isClient = !!(vs.ctx.token || vs.ctx.client);
   const comments = listFeedback(f.projectId, { versionId: v.id });
   const { prev, next, list: versions } = neighbours(v);
   const pins = comments.filter((c) => c.pinX != null && !c.parentId);
@@ -184,7 +184,7 @@ onForm({
     const kind = fileKind(db.get('fileVersions', vs.versionId));
     const data = { ...v, fileVersionId: vs.versionId, timecode: (kind === 'video' || kind === 'audio') && m ? m.currentTime : null, pinX: vs.pin?.x ?? null, pinY: vs.pin?.y ?? null };
     const f = db.get('files', db.get('fileVersions', vs.versionId).fileId);
-    if (vs.ctx.token) { portalAddFeedback(vs.ctx.projectId, vs.ctx.token, data); vs.ctx.name = v.name; } else addFeedback(f.projectId, data);
+    if (vs.ctx.token || vs.ctx.client) { portalAddFeedback(vs.ctx.projectId, vs.ctx.token, data); vs.ctx.name = v.name; } else addFeedback(f.projectId, data);
     vs.pin = null;
     const at = m?.currentTime;
     refreshModal(); rerender();
@@ -194,7 +194,7 @@ onForm({
     return false;
   },
   'fb-reply': (v) => {
-    if (v.t) {
+    if (v.t || v.c) {
       portalAddFeedback(v.pid, v.t, { parentId: v.parentId, comment: v.comment, name: v.name });
       try { if (v.name) localStorage.setItem(`sw.portal.name.${v.pid}`, v.name.trim()); } catch { /* ignore */ }
       if (vs) vs.ctx.name = v.name;

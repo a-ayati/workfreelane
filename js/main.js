@@ -5,7 +5,10 @@ import { humanError } from './core/util.js';
 import { t, setActiveLang, uiLang } from './core/i18n.js';
 import { html, route, match, parseHash, setRenderer, installDelegation, rerender, go, href, isDirty, toast, empty, closeModal, animateCounts } from './ui.js';
 import './views/command.js';
-import { maybeBusiness } from './services/context.js';
+import { maybeBusiness, access } from './services/context.js';
+import { db } from './core/store.js';
+import { calendarView } from './views/calendar.js';
+import { organizationView } from './views/org.js';
 import { migrate, acceptInvites } from './services/org.js';
 import { appShell } from './views/shell.js';
 import * as pub from './views/public.js';
@@ -30,6 +33,8 @@ R('/verify', 'public', pub.verify, null, 'Verify email');
 R('/mailbox', 'public', pub.mailbox, null, 'Development mailbox');
 R('/onboarding', 'onboarding', onboarding, null, 'Set up your workspace');
 R('/dashboard', 'app', dashboard, 'dashboard', 'Dashboard');
+R('/calendar', 'app', calendarView, 'calendar', 'Calendar');
+R('/organization', 'app', organizationView, 'organization', 'Organization');
 R('/projects', 'app', projectsList, 'projects', 'Projects');
 R('/projects/new', 'app', projectNew, 'projects', 'New project');
 R('/projects/:id/:tab?', 'app', workspace, 'projects', 'Project');
@@ -60,6 +65,17 @@ function errorPage(err, inApp) {
   return inApp ? body : html`<main style="max-width:560px;margin:10vh auto;padding:0 16px">${body}</main>`;
 }
 
+// The project a page belongs to — drives breadcrumbs, color and atmosphere.
+function pageContext(path, params) {
+  let pid = null;
+  let section = null;
+  if (/^\/projects\/[^/]+/.test(path) && params.id !== 'new') { pid = params.id; section = params.tab || 'overview'; }
+  else if (path.startsWith('/invoices/')) { pid = db.get('invoices', params.id)?.projectId; section = 'invoices'; }
+  else if (path.startsWith('/proposals/')) { pid = db.get('proposals', params.id)?.projectId; section = 'proposal'; }
+  const project = pid ? db.get('projects', pid) : null;
+  return project && access(project) ? { project, section } : {};
+}
+
 function render() {
   const { path, query } = parseHash();
   const m = match(path);
@@ -80,9 +96,9 @@ function render() {
   let out;
   try {
     const body = view(m.params, query);
-    out = layout === 'app' ? appShell(body, nav) : body;
+    out = layout === 'app' ? appShell(body, nav, pageContext(path, m.params)) : body;
   } catch (err) {
-    out = layout === 'app' ? appShell(errorPage(err, true), nav) : errorPage(err, false);
+    out = layout === 'app' ? appShell(errorPage(err, true), nav, {}) : errorPage(err, false);
   }
   root.innerHTML = String(out);
   const skip = document.querySelector('.skip-link'); if (skip) skip.textContent = t('Skip to content');

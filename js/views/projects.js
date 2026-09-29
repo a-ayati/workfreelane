@@ -2,10 +2,10 @@
 import { html, raw, icon, href, pill, empty, pageHead, field, tabs, onAction, onForm, go, toast, openModal, closeModal, modalHead, confirmDialog, moneyEl, comingSoon, successCard } from '../ui.js';
 import { db } from '../core/store.js';
 import { t } from '../core/i18n.js';
-import { fmtMoney, fmtDate, fmtShortDate, fmtDateTime, fmtRelative, UserError, lines } from '../core/util.js';
+import { fmtMoney, fmtDate, fmtShortDate, fmtDateTime, fmtRelative, UserError, NotFoundError, ForbiddenError, lines } from '../core/util.js';
 import { appLink } from '../core/mailer.js';
 import { runAI } from '../core/ai.js';
-import { myBusiness, activityText } from '../services/context.js';
+import { me, myBusiness, activityText, access, can, wsCan, projectParties, orgRole, workspacesOf, switchWorkspace } from '../services/context.js';
 import { listProjects, getProject, createProject, updateProject, cancelProject, listClients, nextAction, financials, progress, listDeliverables, saveScope, latestProposal, regeneratePortalLink, isOverdue, proposalTotal } from '../services/core.js';
 import { getBrief, saveBrief, sendBrief, markBriefReviewed, createProposal, projectContract, updateContract, regenerateContract, listChangeOrders, createChangeOrder, withdrawChangeOrder } from '../services/workflow.js';
 import { listInvoices, createFinalInvoice, createInvoice, invoiceChangeOrder } from '../services/billing.js';
@@ -15,6 +15,9 @@ import { PROJECT_STATUSES, PROPOSAL_STATUSES, CONTRACT_STATUSES, INVOICE_STATUSE
 import { projectRow } from './dashboard.js';
 import { contractDoc } from './documents.js';
 import { filesTab, feedbackTab, revisionsTab, approvalsTab } from './project-work.js';
+import { timelineTab, messagesTab, tasksTab, teamTab, projectCalendarTab } from './collab.js';
+import { clientContext, clientSections, clientSectionView } from './portal.js';
+import { projectRoleLabel } from '../services/org.js';
 
 const clientName = (id) => db.get('clients', id)?.name || '—';
 const typeOptions = () => PROJECT_TYPES.map((x) => [x, t(x)]);
@@ -71,66 +74,140 @@ export function projectNew(_, q) {
 }
 
 // ---------------- Workspace ----------------
-const TABS = ['overview', 'brief', 'proposal', 'contract', 'scope', 'files', 'feedback', 'revisions', 'approvals', 'invoices', 'activity'];
-const TAB_LABELS = { overview: 'Overview', brief: 'Brief', proposal: 'Proposal', contract: 'Contract', scope: 'Scope', files: 'Files', feedback: 'Feedback', revisions: 'Revisions', approvals: 'Approvals', invoices: 'Invoices', activity: 'Activity' };
-const FLOW = ['Brief', 'Proposal', 'Contract', 'Deposit', 'Production', 'Approval', 'Delivery', 'Payment', 'Completed'];
-function flowIndex(p) {
-  const prop = latestProposal(p.id);
-  const f = financials(p);
-  if (p.status === 'completed') return 9;
-  if (p.status === 'approved') return p.deliveredAt ? (f.balance > 0.001 ? 7 : 8) : 6;
-  if (p.status === 'awaiting_approval') return 5;
-  if (['active', 'in_review', 'revision_requested'].includes(p.status)) return 4;
-  if (p.status === 'awaiting_deposit') return 3;
-  if (prop?.status === 'accepted') return 2;
-  if (prop) return 1;
-  return 0;
+const TABS = ['overview', 'brief', 'proposal', 'contract', 'scope', 'tasks', 'files', 'feedback', 'revisions', 'approvals', 'messages', 'calendar', 'invoices', 'team', 'activity'];
+const TAB_LABELS = { overview: 'Overview', brief: 'Brief', proposal: 'Proposal', contract: 'Contract', scope: 'Scope', tasks: 'Tasks', files: 'Files', feedback: 'Feedback', revisions: 'Revisions', approvals: 'Approvals', messages: 'Messages', calendar: 'Calendar', invoices: 'Invoices', team: 'Team', activity: 'Activity' };
+const TAB_CAP = { overview: 'project.view', brief: 'brief.view', proposal: 'proposal.view', contract: 'contract.view', scope: 'scope.view', tasks: 'tasks.view', files: 'files.view', feedback: 'feedback.view', revisions: 'revisions.view', approvals: 'approvals.view', messages: 'messages', calendar: 'calendar.view', invoices: 'finance.view', team: 'team.view', activity: 'activity.view' };
+// Tabs both sides share; the client side adds them after its own sections.
+const SHARED_TABS = ['tasks', 'messages', 'calendar', 'team', 'activity'];
+const SHARED_VIEWS = { tasks: tasksTab, messages: messagesTab, calendar: projectCalendarTab, team: teamTab, activity: timelineTab };
+
+// Open a project in the workspace it belongs to, so every link inside works.
+function enterProjectWorkspace(p, acc) {
+  const cur = myBusiness();
+  const u = me();
+  const target = acc.side === 'provider' ? p.businessId : projectParties(p).find((x) => x.side === 'client' && x.businessId && orgRole(u, x.businessId))?.businessId;
+  if (target && target !== cur.id && workspacesOf(u).some((w) => w.id === target)) switchWorkspace(target);
 }
 
-export function workspace(params) {
-  const p = getProject(params.id);
-  const tab = TABS.includes(params.tab) ? params.tab : 'overview';
-  const f = financials(p);
+// One dominant next action, adjusted to what this person's role can do.
+function roleNextAction(p, acc) {
   const na = nextAction(p);
+  const tabOf = (h = '') => (h.startsWith('/invoices/') ? 'invoices' : h.startsWith('/proposals/') ? 'proposal' : h.split('/')[3]?.split('?')[0] || 'overview');
+  const NEED = { invoices: 'finance.manage', proposal: 'proposal.edit', contract: 'contract.edit', brief: 'brief.edit', files: 'files.upload', revisions: 'files.upload', approvals: 'approvals.request', scope: 'scope.edit' };
+  const need = NEED[tabOf(na.href)];
+  if (na.waiting || !need || acc.caps.has(need)) return na;
+  const task = db.all('tasks', (x) => x.projectId === p.id && x.assigneeId === me().id && x.status !== 'done').sort((a, z) => (a.dueDate || '9999').localeCompare(z.dueDate || '9999'))[0];
+  if (task) return { label: task.title, detail: task.dueDate ? t('Your task · due {date}', { date: fmtShortDate(task.dueDate) }) : t('Your task'), href: `/projects/${p.id}/tasks` };
+  return { label: na.label, detail: t('Handled by the project manager.'), waiting: true, href: na.href && acc.caps.has(TAB_CAP[tabOf(na.href)] || 'project.view') ? na.href : '' };
+}
+
+function projectIdentity(p, acc, { sub = '' } = {}) {
+  const parties = projectParties(p);
+  const prov = parties.find((x) => x.side === 'provider');
+  const client = parties.find((x) => x.side === 'client');
+  const extra = parties.filter((x) => x.side !== 'provider' && x !== client);
+  return html`<div class="proj-id">
+    <span class="proj-icon" aria-hidden="true">${icon(p.icon || 'folder', 22)}</span>
+    <div style="min-width:0">
+      <h1>${p.name}</h1>
+      ${p.altName ? html`<div class="alt-name" dir="auto">${p.altName}</div>` : ''}
+      <div class="parties"><span class="party${acc.side === 'provider' ? ' me' : ''}">${prov?.name}</span><span class="link-sep" aria-hidden="true">${icon('swap', 13)}</span><span class="party${acc.side === 'client' ? ' me' : ''}">${client?.name || '—'}</span>${extra.map((x) => html`<span class="party">${x.name}</span>`)}${sub ? html`<span class="muted small">${sub}</span>` : ''}</div>
+    </div>
+  </div>`;
+}
+
+export function workspace(params, q) {
+  const p = db.get('projects', params.id);
+  if (!p) throw new NotFoundError(t('This project could not be found.'));
+  const acc = access(p);
+  if (!acc) throw new ForbiddenError(t("You don't have access to this project."));
+  enterProjectWorkspace(p, acc);
+  return acc.side === 'client' ? clientWorkspace(p, acc, params, q) : providerWorkspace(p, acc, params);
+}
+
+function providerWorkspace(p, acc, params) {
+  const has = (c) => acc.caps.has(c);
+  const visible = TABS.filter((x) => has(TAB_CAP[x]));
+  const tab = visible.includes(params.tab) ? params.tab : 'overview';
+  const f = financials(p);
+  const na = roleNextAction(p, acc);
   const c = db.get('clients', p.clientId);
   const counts = {
     feedback: db.count('feedback', (x) => x.projectId === p.id && x.status === 'open' && x.authorType === 'client' && !x.parentId),
     approvals: db.count('approvals', (x) => x.projectId === p.id && x.status === 'pending'),
     revisions: db.count('revisionRounds', (x) => x.projectId === p.id && x.status !== 'delivered'),
+    tasks: db.count('tasks', (x) => x.projectId === p.id && x.side === 'provider' && x.status !== 'done' && x.assigneeId === me().id),
   };
-  const body = { overview, brief: briefTab, proposal: proposalTab, contract: contractTab, scope: scopeTab, files: filesTab, feedback: feedbackTab, revisions: revisionsTab, approvals: approvalsTab, invoices: invoicesTab, activity: activityTab }[tab](p, params);
+  const views = { overview, brief: briefTab, proposal: proposalTab, contract: contractTab, scope: scopeTab, files: filesTab, feedback: feedbackTab, revisions: revisionsTab, approvals: approvalsTab, invoices: invoicesTab, ...SHARED_VIEWS };
+  const body = views[tab](p, params);
   return html`
     <a class="back-link" href="${href('/projects')}">${icon('back', 16)} ${t('Projects')}</a>
     <div class="proj-head">
-      <div>
-        <div class="btn-row" style="margin-bottom:8px">${pill(PROJECT_STATUSES, p.status)}${isOverdue(p) ? html`<span class="pill pill-red"><span class="dot"></span>${t('Past deadline')}</span>` : ''}</div>
-        <h1>${p.name}</h1>
+      <div style="min-width:0">
+        <div class="btn-row" style="margin-bottom:10px">${pill(PROJECT_STATUSES, p.status)}${isOverdue(p) ? html`<span class="pill pill-red"><span class="dot"></span>${t('Past deadline')}</span>` : ''}<span class="role-pill">${t(projectRoleLabel(acc.role))}</span></div>
+        ${projectIdentity(p, acc)}
         <div class="proj-meta">
-          <div><span>${t('Client')}</span><a href="${href(`/clients/${p.clientId}`)}">${c?.name}</a></div>
+          <div><span>${t('Client')}</span>${has('scope.view') && wsCan('clients.view') ? html`<a href="${href(`/clients/${p.clientId}`)}">${c?.name}</a>` : c?.name}</div>
           <div><span>${t('Deadline')}</span>${p.deadline ? fmtDate(p.deadline) : '—'}</div>
-          <div><span>${t('Total value')}</span>${moneyEl(f.total, p.currency)}</div>
-          <div><span>${t('Paid::label')}</span>${f.paidPct}%</div>
+          ${has('finance.view') ? html`<div><span>${t('Total value')}</span>${moneyEl(f.total, p.currency)}</div><div><span>${t('Paid::label')}</span>${f.paidPct}%</div>` : ''}
           <div><span>${t('Revisions')}</span>${listRounds(p.id).length} / ${p.revisionsIncluded}</div>
           <div><span>${t('Client language')}</span>${c?.language === 'ar' ? 'العربية' : 'English'}</div>
         </div>
       </div>
       <div class="btn-row">
-        <button class="btn btn-secondary" data-action="portal-share" data-id="${p.id}">${icon('link', 16)} ${t('Client portal')}</button>
-        <button class="icon-btn" data-action="project-menu" data-id="${p.id}" aria-label="${t('Project settings')}">${icon('more')}</button>
+        ${has('settings.manage') ? html`<button class="btn btn-secondary" data-action="portal-share" data-id="${p.id}">${icon('link', 16)} ${t('Client portal')}</button>
+        <button class="icon-btn" data-action="project-menu" data-id="${p.id}" aria-label="${t('Project settings')}">${icon('more')}</button>` : ''}
       </div>
     </div>
     <div class="next-card${na.waiting ? ' waiting' : ''}">
       <div><div class="label">${na.waiting ? t('Status') : t('Your action')}</div><div class="title">${na.label}</div><div class="detail">${na.detail || ''}</div></div>
       ${na.href && !na.waiting ? html`<a class="btn btn-primary" href="${href(na.href)}">${na.label} ${icon('arrow', 16)}</a>` : na.href ? html`<a class="btn btn-secondary" href="${href(na.href)}">${t('View')}</a>` : ''}
     </div>
-    ${journey(p, tab)}
-    ${tabs(TABS.map((x) => [x, t(TAB_LABELS[x]), `/projects/${p.id}/${x}`, counts[x] || '']), tab)}
+    ${journey(p, acc)}
+    ${tabs(visible.map((x) => [x, t(TAB_LABELS[x]), `/projects/${p.id}/${x}`, counts[x] || '']), tab)}
     ${body}`;
 }
 
+// The client organization's view of a shared project.
+const CLIENT_TAB = { approvals: 'approval', invoices: 'invoice' };
+function clientWorkspace(p, acc, params) {
+  const ctx = clientContext(p);
+  const sections = clientSections(p);
+  const shared = SHARED_TABS.filter((x) => acc.caps.has(TAB_CAP[x]));
+  const ids = [...sections.map(([id]) => id), ...shared];
+  const want = CLIENT_TAB[params.tab] || params.tab;
+  const tab = ids.includes(want) ? want : 'overview';
+  const { todo, body } = SHARED_VIEWS[tab] ? { todo: clientSectionView(ctx, 'overview').todo, body: SHARED_VIEWS[tab](p) } : clientSectionView(ctx, tab);
+  const prov = projectParties(p).find((x) => x.side === 'provider');
+  const first = todo.find((x) => !x.done);
+  const labels = Object.fromEntries(sections);
+  const count = (s) => todo.filter((x) => x.section === s && !x.done).length || '';
+  return html`
+    <a class="back-link" href="${href('/projects')}">${icon('back', 16)} ${t('Projects')}</a>
+    <div class="proj-head">
+      <div style="min-width:0">
+        <div class="btn-row" style="margin-bottom:10px">${pill(CLIENT_STATUS, p.status)}<span class="role-pill">${t(projectRoleLabel(acc.role))}</span></div>
+        ${projectIdentity(p, acc)}
+        <div class="proj-meta"><div><span>${t('Delivered by')}</span>${prov?.name}</div><div><span>${t('Deadline')}</span>${p.deadline ? fmtDate(p.deadline) : '—'}</div><div><span>${t('Progress')}</span>${progress(p)}%</div></div>
+      </div>
+    </div>
+    <div class="next-card${first ? '' : ' waiting'}">
+      <div><div class="label">${first ? t('Your action') : t('Status')}</div><div class="title">${first ? first.title : t('Nothing needed from you right now')}</div><div class="detail">${first ? first.body : t('Waiting for {org}.', { org: prov?.name })}</div></div>
+      ${first ? html`<a class="btn btn-primary" href="${href(`/projects/${p.id}/${first.section}`)}">${first.cta} ${icon('arrow', 16)}</a>` : ''}
+    </div>
+    ${journey(p, acc)}
+    ${tabs(ids.map((x) => [x, labels[x] ? t(labels[x]) : t(TAB_LABELS[x]), `/projects/${p.id}/${x}`, count(x)]), tab)}
+    ${body}`;
+}
+const CLIENT_STATUS = {
+  draft: { label: 'Getting started', tone: 'neutral' }, awaiting_deposit: { label: 'Awaiting deposit', tone: 'amber' }, active: { label: 'In progress', tone: 'green' },
+  in_review: { label: 'Ready for your review', tone: 'blue' }, revision_requested: { label: 'Revising', tone: 'amber' }, awaiting_approval: { label: 'Awaiting your approval', tone: 'blue' },
+  approved: { label: 'Approved', tone: 'green' }, completed: { label: 'Completed', tone: 'ink' }, cancelled: { label: 'Cancelled', tone: 'red' },
+};
+
 // Interactive project timeline: every stage opens its content; the current
 // stage pulses. Stages scroll horizontally (swipe on touch) with buttons too.
-function journeyStages(p) {
+function journeyStages(p, acc) {
   const brief = getBrief(p.id);
   const prop = latestProposal(p.id);
   const contract = projectContract(p.id);
@@ -139,23 +216,25 @@ function journeyStages(p) {
   const shared = db.find('files', (x) => x.projectId === p.id && x.sharedAt && x.folder !== 'brand' && x.folder !== 'brief');
   const approved = approvals.some((a) => a.status === 'approved');
   const past = (s) => ['active', 'in_review', 'revision_requested', 'awaiting_approval', 'approved', 'completed'].includes(s);
-  const base = `/projects/${p.id}/`;
+  const client = acc.side === 'client';
+  // Each stage links to the section that holds it — when this person can open it.
+  const go2 = (tab, cap, clientTab = tab) => (acc.caps.has(cap) ? `/projects/${p.id}/${client ? clientTab : tab}` : '');
   return [
-    ['Brief', base + 'brief', !!(brief?.objective || prop)],
-    ['Scope', base + 'scope', listDeliverables(p.id).length > 0 && !!prop],
-    ['Proposal', base + 'proposal', prop?.status === 'accepted'],
-    ['Contract', base + 'contract', contract?.status === 'accepted'],
-    ['Deposit', base + 'invoices', f.depositPaid || (contract?.status === 'accepted' && !p.depositPercent) || (past(p.status) && f.depositAmount <= 0)],
-    ['Production', base + 'files', !!shared || ['in_review', 'revision_requested', 'awaiting_approval', 'approved', 'completed'].includes(p.status)],
-    ['Review', base + 'feedback', approvals.length > 0 || ['approved', 'completed'].includes(p.status)],
-    ['Approval', base + 'approvals', approved || ['approved', 'completed'].includes(p.status)],
-    ['Payment', base + 'invoices', f.contracted && f.balance <= 0.001],
-    ['Delivery', base + 'files?folder=deliverables', !!p.deliveredAt],
+    ['Brief', go2('brief', 'brief.view'), !!(brief?.objective || prop)],
+    ['Scope', go2('scope', 'scope.view'), listDeliverables(p.id).length > 0 && !!prop],
+    ['Proposal', go2('proposal', 'proposal.view'), prop?.status === 'accepted'],
+    ['Contract', go2('contract', 'contract.view'), contract?.status === 'accepted'],
+    ['Deposit', go2('invoices', 'finance.view', 'invoice'), f.depositPaid || (contract?.status === 'accepted' && !p.depositPercent) || (past(p.status) && f.depositAmount <= 0)],
+    ['Production', go2('files', 'files.view'), !!shared || ['in_review', 'revision_requested', 'awaiting_approval', 'approved', 'completed'].includes(p.status)],
+    ['Review', go2('feedback', 'feedback.view'), approvals.length > 0 || ['approved', 'completed'].includes(p.status)],
+    ['Approval', go2('approvals', 'approvals.view', 'approval'), approved || ['approved', 'completed'].includes(p.status)],
+    ['Payment', go2('invoices', 'finance.view', 'invoice'), f.contracted && f.balance <= 0.001],
+    ['Delivery', go2('files', 'files.view') && `${go2('files', 'files.view')}${client ? '' : '?folder=deliverables'}`, !!p.deliveredAt],
   ];
 }
-function journey(p) {
+function journey(p, acc) {
   if (p.status === 'cancelled') return '';
-  const stages = journeyStages(p);
+  const stages = journeyStages(p, acc);
   const current = p.status === 'completed' ? -1 : stages.findIndex(([, , done]) => !done);
   const pct = progress(p);
   return html`<section class="journey" aria-label="${t('Workflow')}">
@@ -165,24 +244,25 @@ function journey(p) {
     </div>
     <div class="journey-track" aria-hidden="true"><span data-width="${pct}" data-key="jt-${p.id}" style="width:${pct}%"></span></div>
     <ol class="stages" role="list">
-      ${stages.map(([label, link, done], i) => html`<li style="list-style:none;display:contents"><a class="stage-chip${done ? ' done' : ''}${i === current ? ' current' : ''}" href="${href(link)}"${i === current ? raw(' aria-current="step" data-current') : ''}><span class="mark" aria-hidden="true">${done ? '✓' : i === current ? '' : ''}</span>${t(label)}<span class="sr-only">${done ? t('(done)') : i === current ? t('(current)') : ''}</span></a></li>`)}
+      ${stages.map(([label, link, done], i) => { const cls = `stage-chip${done ? ' done' : ''}${i === current ? ' current' : ''}${link ? '' : ' locked'}`; const inner = html`<span class="mark" aria-hidden="true">${done ? '✓' : ''}</span>${t(label)}<span class="sr-only">${done ? t('(done)') : i === current ? t('(current)') : ''}</span>`; return html`<li style="list-style:none;display:contents">${link ? html`<a class="${cls}" href="${href(link)}"${i === current ? raw(' aria-current="step" data-current') : ''}>${inner}</a>` : html`<span class="${cls}"${i === current ? raw(' aria-current="step" data-current') : ''}>${inner}</span>`}</li>`; })}
     </ol>
   </section>`;
 }
 
 function overview(p) {
   const f = financials(p);
+  const money = can(p, 'finance.view');
   const del = listDeliverables(p.id);
-  const acts = projectActivity(p.id).slice(0, 6);
+  const acts = projectActivity(p.id).filter((a) => money || !/^(invoice|payment|deposit)\./.test(a.action)).slice(0, 6);
   const c = db.get('clients', p.clientId);
   const reminders = listReminders().filter((r) => r.projectId === p.id);
   return html`<div class="grid-main">
     <div class="stack">
-      <div class="pay-grid">
+      ${money ? html`<div class="pay-grid">
         <div><span>${t('Project total')}</span><b>${fmtMoney(f.total, p.currency)}</b></div>
         <div><span>${t('Deposit ({n}%)', { n: p.depositPercent })}</span><b>${fmtMoney(f.depositAmount, p.currency)}</b><div class="small ${f.depositPaid ? '' : 'muted'}">${f.depositAmount <= 0 ? t('No deposit') : f.depositPaid ? t('✓ Deposit received') : f.contracted ? t('Pending deposit') : t('Due after contract')}</div></div>
         <div><span>${t('Remaining')}</span><b>${fmtMoney(f.balance, p.currency)}</b><div class="small muted">${t('{amount} paid', { amount: fmtMoney(f.paid, p.currency) })}</div></div>
-      </div>
+      </div>` : ''}
       <div class="card"><div class="card-head"><h2>${t('Scope')}</h2><a class="small" href="${href(`/projects/${p.id}/scope`)}">${t('View scope')}</a></div>
         ${del.length ? html`<ul class="scope-list in">${del.slice(0, 6).map((d) => html`<li>${icon('check', 16)}<span>${d.quantity} × ${d.title}${d.source === 'change_order' ? html` <span class="tag">${t('Change order')}</span>` : ''}</span></li>`)}</ul>` : html`<p class="muted">${t('No deliverables defined yet.')}</p>`}
         <p class="small muted" style="margin:10px 0 0">${t('{n} revision round(s) included · {m} exclusion(s) listed', { n: p.revisionsIncluded, m: (p.exclusions || []).length })}</p>
@@ -194,7 +274,7 @@ function overview(p) {
     <aside class="stack">
       <div class="card"><h2 style="margin-bottom:10px">${t('Client')}</h2><div class="cell-title">${c?.name}</div><div class="cell-sub">${c?.company || ''}</div><div class="cell-sub" dir="ltr" style="text-align:start">${c?.email || t('No email')}</div>
         <a class="btn btn-secondary btn-sm" style="margin-top:12px" href="${href(`/clients/${c?.id}`)}">${t('Client profile')}</a></div>
-      ${p.status === 'approved' ? html`<div class="card"><h2 style="margin-bottom:8px">${t('Finish the project')}</h2><p class="muted small">${p.deliveredAt ? t('Delivered {date}.', { date: fmtShortDate(p.deliveredAt) }) : t('Deliver final files first.')} ${f.balance > 0.001 ? t('{amount} outstanding.', { amount: fmtMoney(f.balance, p.currency) }) : t('Fully paid.')}</p><button class="btn btn-primary btn-block" data-action="project-complete" data-id="${p.id}">${t('Mark as completed')}</button></div>` : ''}
+      ${p.status === 'approved' && can(p, 'delivery.manage') ? html`<div class="card"><h2 style="margin-bottom:8px">${t('Finish the project')}</h2><p class="muted small">${p.deliveredAt ? t('Delivered {date}.', { date: fmtShortDate(p.deliveredAt) }) : t('Deliver final files first.')} ${f.balance > 0.001 ? t('{amount} outstanding.', { amount: fmtMoney(f.balance, p.currency) }) : t('Fully paid.')}</p><button class="btn btn-primary btn-block" data-action="project-complete" data-id="${p.id}">${t('Mark as completed')}</button></div>` : ''}
       ${p.status === 'completed' ? html`<div class="card"><h2 style="margin-bottom:8px">${t('After delivery')}</h2>
         <a class="btn btn-secondary btn-block" href="${href(`/portfolio/new?project=${p.id}`)}">${icon('star', 16)} ${t('Add to portfolio')}</a>
         <div class="divider"></div>

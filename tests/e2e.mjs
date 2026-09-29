@@ -263,7 +263,7 @@ try {
 
   // Activity log + search + analytics gate
   await nav(app, `/projects/${projectId}/activity`);
-  const log = await app.locator('.timeline').textContent();
+  const log = await app.locator('.tl').textContent();
   check('activity log records workflow', ['Proposal', 'accepted', 'Contract accepted', 'Deposit received', 'approved by Omar Haddad', 'completed'].every((s) => log.includes(s)));
   await nav(app, '/search?q=restaurant');
   check('global search finds project + client', (await app.locator('.tag:has-text("Project")').count()) > 0 && (await app.locator('.tag:has-text("Client")').count()) > 0);
