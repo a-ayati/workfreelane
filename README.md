@@ -21,6 +21,8 @@ npx http-server -p 5173 -c-1 .
 
 GitHub Pages can host it as-is. Click **Explore the demo** to open a seeded workspace for *Alex Morgan, Creative Director*, with ABC Restaurant, Nova Agency and Vertex Tech as clients.
 
+The login page also lists demo people from a two-organization scenario: **ABC Production** (a production company, owned by Alex) delivering *Program X — Season 1* to **XYZ TV** (a TV channel). Sign in as Alex, Layla (Director), Karim (Editor — no finance access), Yousef (Finance) or Sarah (Approver, client side) to see what each role sees. Demo password: `demo-studio-2026`.
+
 ### Tests
 
 The end-to-end test walks through the full quality checklist in a real browser (Playwright/Chromium):

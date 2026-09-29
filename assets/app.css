@@ -881,7 +881,7 @@ a.list-row:active { background: var(--surface-3); }
 [dir=rtl] .atmo-glow { inset: -20% auto auto -10%; }
 .atmo-icon { position: absolute; inset-inline-end: -60px; bottom: -80px; color: var(--ctx); opacity: .06; filter: blur(3px); }
 .atmo-icon .icon { stroke-width: 1.1; }
-.main-col, .sidebar { position: relative; z-index: 1; }
+.main-col { position: relative; z-index: 1; }
 .in-project .nav a.active { background: color-mix(in srgb, var(--ctx) 14%, transparent); }
 .in-project .nav a.active .icon { color: var(--ctx); }
 .in-project .journey-track span { background: var(--ctx); }
