@@ -124,7 +124,8 @@ export function teamTab(p) {
       </li>`)}</ul>` : html`<p class="muted small" style="margin:0">${party.kind === 'external' ? t('This client works through the secure client link. Invite people by email to give them their own access.') : t('No one yet.')}</p>`}
       ${manage && (mine || acc.side === 'provider') ? html`<div class="btn-row" style="margin-top:14px">
         ${mine ? html`<button class="btn btn-secondary btn-sm" data-action="pm-add" data-id="${p.id}">${icon('plus', 14)} ${t('Add from my organization')}</button>` : ''}
-        <button class="btn btn-ghost btn-sm" data-action="pm-invite" data-id="${p.id}" data-side="${party.side}">${icon('mail', 14)} ${t('Invite by email')}</button></div>` : ''}
+        ${!mine && party.side === 'client' ? html`<button class="btn btn-primary btn-sm" data-action="pm-invite" data-id="${p.id}" data-side="client" data-client="1">${icon('mail', 14)} ${t('Invite the client to create an account')}</button>`
+          : html`<button class="btn btn-ghost btn-sm" data-action="pm-invite" data-id="${p.id}" data-side="${party.side}">${icon('mail', 14)} ${t('Invite by email')}</button>`}</div>` : ''}
     </section>`;
   })}</div>
   <details class="card" style="margin-top:16px"><summary><b>${t('What each role can do')}</b></summary>${roleGuide()}</details>`;
@@ -151,13 +152,13 @@ function addMemberModal(p) {
       <div class="modal-actions"><button type="button" class="btn btn-ghost" data-action="modal-close">${t('Cancel')}</button><button class="btn btn-primary" type="submit">${t('Add to project')}</button></div></form>`
       : html`<p class="muted">${t('Everyone in your organization is already on this project. Invite new colleagues from the Organization page.')}</p><div class="modal-actions"><a class="btn btn-secondary" href="${href('/organization')}">${t('Organization')}</a></div>`}`;
 }
-function inviteModal(p, side) {
+function inviteModal(p, side, prefill = {}) {
   const party = projectParties(p).find((x) => x.side === side);
   return html`${modalHead(t('Invite by email'), party?.name)}
     <form class="form-grid" data-form="pm-invite"><input type="hidden" name="id" value="${p.id}"><input type="hidden" name="side" value="${side}">
-      ${field({ label: t('Name'), name: 'name' })}
-      ${field({ label: t('Email'), name: 'email', type: 'email', required: true, attrs: 'dir="ltr"' })}
-      ${field({ label: t('Project role'), name: 'role', type: 'select', value: side === 'client' ? 'reviewer' : 'editor', options: PROJECT_ROLES.map((r) => [r, t(projectRoleLabel(r))]), full: true })}
+      ${field({ label: t('Name'), name: 'name', value: prefill.name || '' })}
+      ${field({ label: t('Email'), name: 'email', type: 'email', required: true, value: prefill.email || '', attrs: 'dir="ltr"' })}
+      ${field({ label: t('Project role'), name: 'role', type: 'select', value: prefill.role || (side === 'client' ? 'reviewer' : 'editor'), options: PROJECT_ROLES.map((r) => [r, t(projectRoleLabel(r))]), full: true })}
       <p class="small muted full" style="margin:0">${t('They get an email with a link. When they sign in with this address, the project appears in their workspace with exactly this role.')}</p>
       <div class="form-actions full"><button type="button" class="btn btn-ghost" data-action="modal-close">${t('Cancel')}</button><button class="btn btn-primary" type="submit">${t('Send invitation')}</button></div></form>`;
 }
@@ -213,7 +214,12 @@ onAction({
   'task-toggle': (el) => { setTaskStatus(el.dataset.id, el.dataset.done === '1'); },
   'task-delete': async (el) => { if (await confirmDialog({ title: t('Delete this task?'), body: t('This cannot be undone.'), confirm: t('Delete'), tone: 'danger' })) deleteTask(el.dataset.id); },
   'pm-add': (el) => { openModal(addMemberModal(db.get('projects', el.dataset.id))); return false; },
-  'pm-invite': (el) => { openModal(inviteModal(db.get('projects', el.dataset.id), el.dataset.side)); return false; },
+  'pm-invite': (el) => {
+    const p = db.get('projects', el.dataset.id);
+    const cl = el.dataset.client ? db.get('clients', p.clientId) : null;
+    openModal(inviteModal(p, el.dataset.side, cl ? { name: cl.name, email: cl.email || '', role: 'approver' } : {}));
+    return false;
+  },
   'pm-role': (el) => { updateProjectMember(el.dataset.id, { role: el.value }); toast(t('Role updated.')); },
   'pm-remove': async (el) => { if (await confirmDialog({ title: t('Remove from project?'), body: t('They lose access to this project. Their past activity stays in the timeline.'), confirm: t('Remove'), tone: 'danger' })) removeProjectMember(el.dataset.id); },
   'event-delete': (el) => { deleteEvent(el.dataset.id); },

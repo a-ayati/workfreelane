@@ -110,8 +110,28 @@ export function acceptInvites(user) {
   let n = 0;
   db.all('workspaceMembers', (m) => m.status === 'invited' && m.email === user.email).forEach((m) => { db.update('workspaceMembers', m.id, { userId: user.id, status: 'active', joinedAt: nowISO() }); n++; });
   db.all('projectMembers', (m) => m.status === 'invited' && m.email === user.email).forEach((m) => { db.update('projectMembers', m.id, { userId: user.id, status: 'active', joinedAt: nowISO() }); n++; });
-  if (n && !user.onboarded && workspacesOf(user).length) db.update('users', user.id, { onboarded: true });
+  // A person who only joined someone else's project still needs a home for the dashboard.
+  if (n && !user.onboarded) {
+    if (!workspacesOf(user).length) insertWorkspace(user, { kind: 'personal', name: user.name });
+    db.update('users', user.id, { onboarded: true });
+  }
   return n;
+}
+
+// What is waiting for this email address (shown on the invitation page, before sign-in).
+export function pendingInvitesFor(email) {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return { invites: [], hasAccount: false };
+  const invites = [];
+  db.all('projectMembers', (m) => m.status === 'invited' && String(m.email || '').toLowerCase() === e).forEach((m) => {
+    const p = db.get('projects', m.projectId);
+    if (p) invites.push({ kind: 'project', name: p.name, from: db.get('businesses', p.businessId)?.name || '', role: m.role, side: m.side });
+  });
+  db.all('workspaceMembers', (m) => m.status === 'invited' && String(m.email || '').toLowerCase() === e).forEach((m) => {
+    const b = db.get('businesses', m.businessId);
+    if (b) invites.push({ kind: 'organization', name: b.name, from: b.name, role: m.role });
+  });
+  return { invites, hasAccount: !!db.find('users', (u) => u.email === e) };
 }
 
 // ---------- Teams ----------
@@ -214,7 +234,7 @@ export function inviteToProject(projectId, { name, email, role, side }) {
   mailer.send({
     to: e, kind: 'invite', subject: tl(L, 'You have been invited to {project}', { project: p.name }),
     body: tl(L, 'Hi {name},\n\n{inviter} invited you to work on {project} as {role}.', { name: row.name || e, inviter: me().name, project: p.name, role: tl(L, projectRoleLabel(role)) }),
-    link: appLink(existing ? `/projects/${p.id}` : `/signup?email=${encodeURIComponent(e)}`), linkLabel: tl(L, existing ? 'Open project' : 'Create your account'),
+    link: appLink(existing ? `/projects/${p.id}` : `/invite?e=${encodeURIComponent(e)}`), linkLabel: tl(L, existing ? 'Open project' : 'Open your invitation'),
   });
   logActivity(p, freelancerActorFor(p), 'team.invited', '{name} was invited as {role_t}', { name: row.name || e, role_t: projectRoleLabel(role) });
   if (existing) notify(p, { type: 'activity', users: [existing.id], title: 'You were added to {project}', body: 'Your role: {role_t}.', vars: { project: p.name, role_t: projectRoleLabel(role) }, link: `/projects/${p.id}` });

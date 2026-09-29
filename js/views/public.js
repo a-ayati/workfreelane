@@ -1,10 +1,11 @@
 // Landing page, authentication pages and the development mailbox.
-import { html, icon, href, field, onAction, onForm, go, toast, pageHead, empty, avatar } from '../ui.js';
+import { html, raw, icon, href, field, onAction, onForm, go, toast, pageHead, empty, avatar } from '../ui.js';
 import { auth, sendVerification } from '../core/auth.js';
 import { db } from '../core/store.js';
 import { t, setUiLang } from '../core/i18n.js';
 import { fmtDateTime } from '../core/util.js';
 import { seedDemo, DEMO, DEMO_LOGINS } from '../seed.js';
+import { pendingInvitesFor, projectRoleLabel } from '../services/org.js';
 import { langSwitch } from './shell.js';
 
 export function landing() {
@@ -93,30 +94,51 @@ function authFrame(content) {
   </div>`;
 }
 
-export const login = () => authFrame(html`
+export const login = (_, q = {}) => authFrame(html`
   <h1>${t('Welcome back')}</h1><p class="muted">${t('Sign in to your workspace.')}</p>
   <form class="form-stack" data-form="login" novalidate>
-    ${field({ label: t('Email'), name: 'email', type: 'email', required: true, attrs: 'autocomplete="email" dir="ltr"' })}
+    ${field({ label: t('Email'), name: 'email', type: 'email', required: true, value: q.email || '', attrs: 'autocomplete="email" dir="ltr"' })}
     ${field({ label: t('Password'), name: 'password', type: 'password', required: true, attrs: 'autocomplete="current-password"' })}
     <button class="btn btn-primary btn-lg btn-block" type="submit">${t('Sign in')}</button>
   </form>
   <p class="auth-alt"><a href="${href('/forgot')}">${t('Forgot password?')}</a> · ${t('New here?')} <a href="${href('/signup')}">${t('Create an account')}</a></p>
+  <div class="invite-box"><span class="org-mark" aria-hidden="true">${icon('mail', 18)}</span><div><b>${t('Received an invitation?')}</b><p class="muted small" style="margin:2px 0 0">${t('Clients and colleagues open their invitation here.')}</p></div><a class="btn btn-secondary btn-sm" href="${href('/invite')}">${t('Open invitation')}</a></div>
   <div class="demo-box"><b>${t('Want to look around first?')}</b><p class="muted" style="margin:4px 0 12px">${t('A production company and a TV channel working on the same series. Sign in as either side to see what each person sees.')}</p>
     <div class="demo-people">${DEMO_LOGINS.map((x) => html`<button class="demo-person" data-action="demo-login" data-email="${x.email}">${avatar(x.name, null, 32)}<span><b>${x.name}</b><small>${t(x.role)}</small></span>${icon('arrow', 15)}</button>`)}</div></div>`);
 
-export const signup = () => authFrame(html`
-  <h1>${t('Create your account')}</h1><p class="muted">${t('Free to start. No card required.')}</p>
+export const signup = (_, q = {}) => authFrame(html`
+  <h1>${q.invited ? t('Accept your invitation') : t('Create your account')}</h1><p class="muted">${q.invited ? t('Create your account with the invited email address. The project will be waiting for you.') : t('Free to start. No card required.')}</p>
   <form class="form-stack" data-form="signup" novalidate>
     ${field({ label: t('Full name'), name: 'name', required: true, attrs: 'autocomplete="name"' })}
-    ${field({ label: t('Email'), name: 'email', type: 'email', required: true, attrs: 'autocomplete="email" dir="ltr"' })}
+    ${field({ label: t('Email'), name: 'email', type: 'email', required: true, value: q.email || '', attrs: 'autocomplete="email" dir="ltr"' })}
     ${field({ label: t('Password'), name: 'password', type: 'password', required: true, hint: t('At least 8 characters with letters and numbers.'), attrs: 'autocomplete="new-password"' })}
-    <fieldset class="field" style="border:0;padding:0;margin:0"><legend style="padding:0;margin-bottom:6px">${t('I am a')}</legend>
-      <label class="check"><input type="radio" name="role" value="freelancer" checked> ${t('Freelancer')}</label>
-      <span class="muted small">${t('Client, team member and admin accounts are coming later. Clients use a secure project link today.')}</span>
+    <fieldset class="field" style="border:0;padding:0;margin:0"><legend style="padding:0;margin-bottom:8px">${t('I am a')}</legend>
+      <div class="tiles" role="radiogroup" aria-label="${t('Account type')}">
+        <label class="tile tile-lg"><input type="radio" name="role" value="freelancer"${q.invited ? '' : raw(' checked')}><span><span class="tile-t"><b>${t('Professional or organization')}</b><small>${t('I deliver work and manage projects.')}</small></span></span></label>
+        <label class="tile tile-lg"><input type="radio" name="role" value="client"${q.invited ? raw(' checked') : ''}><span><span class="tile-t"><b>${t('Client')}</b><small>${t('I was invited to review, approve or pay.')}</small></span></span></label>
+      </div>
     </fieldset>
-    <button class="btn btn-primary btn-lg btn-block" type="submit">${t('Create account')}</button>
+    <button class="btn btn-primary btn-lg btn-block" type="submit">${q.invited ? t('Accept and continue') : t('Create account')}</button>
   </form>
   <p class="auth-alt">${t('Already have an account?')} <a href="${href('/login')}">${t('Sign in')}</a></p>`);
+
+// Invitation page: look up what is waiting for an email, then sign in or create the account.
+export const invite = (_, q = {}) => {
+  const email = String(q.e || '').trim().toLowerCase();
+  const { invites, hasAccount } = pendingInvitesFor(email);
+  const enc = encodeURIComponent(email);
+  return authFrame(html`
+    <h1>${t('Your invitation')}</h1><p class="muted">${t('Enter the email address the invitation was sent to.')}</p>
+    <form class="form-stack" data-form="invite-lookup" novalidate>
+      ${field({ label: t('Email'), name: 'email', type: 'email', required: true, value: email, attrs: 'autocomplete="email" dir="ltr"' })}
+      <button class="btn btn-secondary btn-lg btn-block" type="submit">${t('Find my invitation')}</button>
+    </form>
+    ${email ? (invites.length ? html`<div class="invite-found"><b>${t('Waiting for you')}</b><ul class="people">${invites.map((i) => html`<li><span class="org-mark" aria-hidden="true">${icon(i.kind === 'project' ? 'folder' : 'building', 18)}</span><div class="person"><b>${i.name}</b><span>${i.from && i.kind === 'project' ? `${i.from} · ` : ''}${t(projectRoleLabel(i.role))}</span></div></li>`)}</ul>
+      ${hasAccount ? html`<a class="btn btn-primary btn-lg btn-block" href="${href(`/login?email=${enc}`)}">${t('Sign in to continue')}</a>` : html`<a class="btn btn-primary btn-lg btn-block" href="${href(`/signup?email=${enc}&invited=1`)}">${t('Create your account')}</a>`}
+      <p class="small muted" style="margin:10px 0 0">${t('Use exactly this email address. The project appears in your workspace with the role you were given.')}</p></div>`
+      : html`<div class="invite-found"><b>${t('No invitation found for this address.')}</b><p class="muted small" style="margin:6px 0 0">${t('Check the spelling, or ask the sender to invite you again. If you were sent a secure project link instead, you do not need an account — just open that link.')}</p></div>`) : html`<p class="small muted">${t('Clients can also work without an account: the secure link in your email opens the project directly.')}</p>`}
+    <p class="auth-alt"><a href="${href('/login')}">${t('Back to sign in')}</a></p>`);
+};
 
 export const forgot = () => authFrame(html`
   <h1>${t('Reset your password')}</h1><p class="muted">${t("We'll email you a link to choose a new one.")}</p>
@@ -153,7 +175,8 @@ export function mailbox() {
 function afterLogin(user) { if (user?.lang) setUiLang(user.lang); }
 onForm({
   async login(v) { const u = await auth.login(v); afterLogin(u); go('/dashboard'); return false; },
-  async signup(v) { await auth.signup(v); toast(t('Account created. We sent a verification email to your dev mailbox.')); go('/onboarding'); return false; },
+  async signup(v) { await auth.signup(v); toast(t('Account created. We sent a verification email to your dev mailbox.')); go(v.role === 'client' ? '/dashboard' : '/onboarding'); return false; },
+  'invite-lookup'(v) { go(`/invite?e=${encodeURIComponent(String(v.email || '').trim())}`); return false; },
   forgot(v) { auth.requestPasswordReset(v.email); toast(t('If an account exists for that email, a reset link is on its way.')); go('/mailbox'); return false; },
   async reset(v) { await auth.resetPassword(v.token, v.password); toast(t('Password updated. Please sign in.')); go('/login'); return false; },
 });

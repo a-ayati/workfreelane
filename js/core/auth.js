@@ -93,7 +93,7 @@ export const auth = {
     email = vEmail(email);
     validatePassword(password);
     if (db.find('users', (u) => u.email === email)) throw new UserError(t('An account with this email already exists. Try signing in instead.'), 'email');
-    if (!['freelancer'].includes(role)) throw new UserError(t('Only freelancer accounts can be created right now.'));
+    if (!['freelancer', 'client'].includes(role)) throw new UserError(t('Choose an account type.'));
     const { hash, salt } = await hashPassword(password);
     const user = db.insert('users', { name, email, passwordHash: hash, salt, role, emailVerified: false, onboarded: false, lang: uiLang() });
     sendVerification(user);

@@ -28,6 +28,7 @@ const R = (pattern, layout, view, nav, title) => route(pattern, { layout, view, 
 R('/', 'public', pub.landing, null, 'Run your freelance business in one place');
 R('/login', 'auth', pub.login, null, 'Sign in');
 R('/signup', 'auth', pub.signup, null, 'Create account');
+R('/invite', 'auth', pub.invite, null, 'Your invitation');
 R('/forgot', 'auth', pub.forgot, null, 'Reset password');
 R('/reset', 'public', pub.reset, null, 'Choose a new password');
 R('/verify', 'public', pub.verify, null, 'Verify email');

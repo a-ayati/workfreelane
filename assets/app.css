@@ -1134,3 +1134,8 @@ details.card > summary::-webkit-details-marker { display: none; }
 .main-col .guide-toc { top: 76px; }
 .main-col .guide-sec { scroll-margin-top: 150px; }
 .guide-grid > .card + .card, .guide-grid > .guide-card { margin-top: 0; }
+
+/* ---------- Invitations ---------- */
+.invite-box { display: flex; align-items: center; gap: 12px; margin-top: 18px; padding: 14px; border-radius: var(--r-card); background: var(--fill); }
+.invite-box > div { flex: 1; min-width: 0; }
+.invite-found { margin-top: 18px; padding: 16px; border-radius: var(--r-card); background: var(--surface); box-shadow: var(--shadow-1), 0 0 0 1px var(--line); display: flex; flex-direction: column; gap: 10px; }
