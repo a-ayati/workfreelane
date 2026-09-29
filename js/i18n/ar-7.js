@@ -52,6 +52,7 @@ export default {
   'Designer': 'مصمم',
   'Finance': 'المالية',
   'Tasks': 'المهام',
+  'How it works': 'كيف تعمل',
   'Project language': 'لغة المشروع',
   'Same as the client profile': 'مثل لغة ملف العميل',
   'Sets the language of the client portal, documents and emails for this project.': 'تحدد لغة بوابة العميل والمستندات والرسائل لهذا المشروع.',

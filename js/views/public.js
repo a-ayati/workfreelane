@@ -28,7 +28,7 @@ export function landing() {
       <a class="brand" href="${href('/')}" style="padding:0" aria-label="Scopewise"><img src="assets/icon.svg" alt=""><span class="brand-name">Scopewise</span></a>
       <nav>
         ${langSwitch()}
-        <a class="btn btn-ghost hide-sm" href="#how">${t('How it works')}</a>
+        <a class="btn btn-ghost hide-sm" href="${href('/learn')}">${t('How it works')}</a>
         ${user ? html`<a class="btn btn-primary" href="${href('/dashboard')}">${t('Open dashboard')}</a>` : html`<a class="btn btn-ghost" href="${href('/login')}">${t('Sign in')}</a><a class="btn btn-primary" href="${href('/signup')}">${t('Start Free')}</a>`}
       </nav>
     </header>

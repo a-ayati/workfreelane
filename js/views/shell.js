@@ -80,6 +80,7 @@ export function appShell(body, active, ctx = {}) {
         ${NAV_MAIN.filter(allowed).map(navLink(active))}
         <div class="nav-label">${t('Grow')}</div>
         ${NAV_GROW.filter(allowed).map(navLink(active))}
+        ${navLink(active)(['guide', 'How it works', 'sparkles', '/guide'])}
         ${navLink(active)(['organization', b.kind === 'organization' ? 'Organization' : 'Organizations', 'building', '/organization'])}
         <div class="nav-sep"></div>
         ${navLink(active)(['settings', 'Settings', 'settings', '/settings'])}
