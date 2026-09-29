@@ -11,6 +11,7 @@
 //   Access     = implicit (organization role) ∪ explicit (`projectMembers` role),
 //                filtered by side, expressed as capabilities.
 import { db } from '../core/store.js';
+import { CAPS_ALL, PROVIDER_ONLY, CLIENT_ONLY, ROLE_CAPS, IMPLICIT, WS_CAPS, roleCaps } from './capabilities.js';
 import { auth } from '../core/auth.js';
 import { planOf } from '../core/plans.js';
 import { t, tl, lang } from '../core/i18n.js';
@@ -20,39 +21,9 @@ import { ACTIVE_STATUSES } from './constants.js';
 export function me() { return auth.requireUser(); }
 
 // ---------- Roles & capabilities ----------
-export const ORG_ROLES = ['owner', 'admin', 'manager', 'member', 'finance', 'viewer'];
-export const PROJECT_ROLES = ['owner', 'manager', 'producer', 'director', 'designer', 'editor', 'reviewer', 'approver', 'finance', 'viewer'];
+export { ORG_ROLES, PROJECT_ROLES, roleCaps } from './capabilities.js';
 export const ORG_TYPES = ['Production company', 'TV channel', 'Agency', 'Studio', 'Company', 'Institution', 'Team'];
 
-const CAPS_ALL = [
-  'project.view', 'brief.view', 'brief.edit', 'brief.submit', 'scope.view', 'scope.edit',
-  'proposal.view', 'proposal.edit', 'proposal.respond', 'contract.view', 'contract.edit', 'contract.accept',
-  'files.view', 'files.upload', 'feedback.view', 'feedback.write',
-  'revisions.view', 'revisions.manage', 'revisions.request',
-  'approvals.view', 'approvals.request', 'approvals.respond', 'changes.respond',
-  'finance.view', 'finance.manage', 'finance.pay', 'delivery.manage',
-  'team.view', 'team.manage', 'tasks.view', 'tasks.manage', 'messages', 'calendar.view', 'activity.view', 'settings.manage',
-];
-// Capabilities that only make sense on one side of a project.
-const PROVIDER_ONLY = new Set(['brief.edit', 'scope.edit', 'proposal.edit', 'contract.edit', 'approvals.request', 'revisions.manage', 'delivery.manage', 'finance.manage', 'settings.manage']);
-const CLIENT_ONLY = new Set(['brief.submit', 'proposal.respond', 'contract.accept', 'approvals.respond', 'changes.respond', 'revisions.request', 'finance.pay']);
-const WORK = ['project.view', 'brief.view', 'scope.view', 'files.view', 'files.upload', 'feedback.view', 'feedback.write', 'revisions.view', 'tasks.view', 'messages', 'calendar.view', 'activity.view', 'team.view'];
-const REVIEW = ['project.view', 'brief.view', 'scope.view', 'files.view', 'feedback.view', 'feedback.write', 'revisions.view', 'revisions.request', 'brief.submit', 'approvals.view', 'tasks.view', 'messages', 'calendar.view', 'activity.view', 'team.view'];
-const ROLE_CAPS = {
-  owner: CAPS_ALL,
-  manager: CAPS_ALL,
-  producer: CAPS_ALL.filter((c) => !['finance.manage', 'finance.pay', 'team.manage', 'settings.manage'].includes(c)),
-  director: CAPS_ALL.filter((c) => !['finance.manage', 'finance.pay', 'settings.manage'].includes(c)),
-  designer: [...WORK, 'tasks.manage'],
-  editor: [...WORK, 'tasks.manage'],
-  reviewer: REVIEW,
-  approver: [...REVIEW, 'approvals.respond', 'proposal.view', 'proposal.respond', 'contract.view', 'contract.accept', 'changes.respond'],
-  finance: ['project.view', 'scope.view', 'proposal.view', 'contract.view', 'approvals.view', 'finance.view', 'finance.manage', 'finance.pay', 'messages', 'calendar.view', 'activity.view', 'team.view'],
-  viewer: ['project.view', 'brief.view', 'scope.view', 'files.view', 'feedback.view', 'revisions.view', 'approvals.view', 'calendar.view', 'activity.view', 'team.view'],
-};
-// Organization roles that grant access to every project of the organization.
-const IMPLICIT = { owner: 'owner', admin: 'owner', manager: 'manager', finance: 'finance' };
-export const roleCaps = (role) => ROLE_CAPS[role] || [];
 
 // ---------- Workspaces ----------
 export function membershipsOf(userId) {
@@ -92,13 +63,6 @@ export function orgRole(user, businessId) {
 }
 export const myOrgRole = () => orgRole(me(), myBusiness().id);
 // Workspace-level permission (lists and pages that span every project).
-const WS_CAPS = {
-  owner: ['*'], admin: ['*'],
-  manager: ['projects.create', 'clients.view', 'clients.manage', 'finance.view', 'proposal.view', 'contract.view', 'portfolio', 'analytics', 'members.view'],
-  finance: ['finance.view', 'finance.manage', 'proposal.view', 'contract.view', 'clients.view', 'members.view'],
-  member: ['projects.create', 'members.view'],
-  viewer: ['members.view'],
-};
 export function wsCan(cap, user = auth.currentUser(), businessId = currentWorkspace(user)?.id) {
   const r = orgRole(user, businessId);
   const caps = WS_CAPS[r] || [];

@@ -2,10 +2,11 @@
   "name": "scopewise",
   "private": true,
   "type": "module",
-  "description": "Freelancer business management MVP — from brief to payment.",
+  "description": "Freelancer business management MVP \u2014 from brief to payment.",
   "scripts": {
     "start": "http-server -p 5173 -c-1 .",
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "gen:supabase": "node tools/gen-supabase.mjs"
   },
   "devDependencies": {
     "http-server": "^14.1.1",
